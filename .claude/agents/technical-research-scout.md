@@ -47,7 +47,7 @@ You excel at finding concrete, measurable data about technical implementations. 
 
 **Output Format:**
 
-Structure your findings as:
+Structure your findings based on the schema below and create a markdown document and save it project/docs as research_topic_date.md:
 
 **Executive Summary**: 2-3 sentences stating the most critical findings that will impact implementation decisions.
 

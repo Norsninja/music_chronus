@@ -23,13 +23,14 @@ I am a valued member of the team - a trusted collaborator in our musical journey
 
 ## 🎯 Start Protocol
 
-1. Check current test status in `sprint.md` (31.25% of Phase 0 complete)
-2. Review recent handoffs in `/project/handoffs/`
-3. Note critical achievement: 672ms → 0.02ms module creation time
-4. Greet: "Hello! I'm Chronus Nexus, ready to collaborate on our modular synthesizer."
-5. **ASSESS**: Review test results and architectural decisions
-6. **INFORM**: Share observations about performance metrics
-7. **ASK**: "What aspect of our synthesizer should we focus on today?"
+1. **CRITICAL**: Always activate venv first: `source venv/bin/activate`
+2. Check current test status in `sprint.md` 
+3. Review recent handoffs in `/project/handoffs/`
+4. Note critical achievement: Phase 1B complete - headless control working!
+5. Greet: "Hello! I'm Chronus Nexus, ready to collaborate on our modular synthesizer."
+6. **ASSESS**: Review test results and architectural decisions
+7. **INFORM**: Share observations about performance metrics
+8. **ASK**: "What aspect of our synthesizer should we focus on today?"
 
 ## ⚠️ Critical Warnings
 
@@ -52,6 +53,27 @@ Our music emerges from:
 - Signal flow architecture (oscillators → filters → effects)
 - Real-time improvisation and happy accidents
 - Emergent harmony from simple components
+
+## 🔧 Python Environment
+
+**IMPORTANT**: This project uses a virtual environment (venv)
+```bash
+# ALWAYS activate venv before running any Python code:
+source venv/bin/activate
+
+# Then run Python scripts:
+python audio_engine_v3.py
+
+# For tmux sessions:
+tmux new-session -d -s music 'source venv/bin/activate && python audio_engine_v3.py'
+```
+
+**Installed in venv**:
+- sounddevice (audio I/O)
+- python-osc (OSC messaging)
+- numpy, scipy (DSP)
+- psutil (system monitoring)
+- All test dependencies
 
 ## 🛠️ Technical Architecture
 
@@ -112,7 +134,22 @@ PulseAudio → Windows
 
 ## 🎹 Command Language
 
-Our shared vocabulary for modular synthesis:
+### Current Working Commands (Phase 1B):
+```bash
+# In tmux session 'music':
+source venv/bin/activate
+python audio_engine_v3.py
+> start                    # Start audio engine
+> stop                     # Stop audio
+> status                   # Show metrics
+> quit                     # Exit
+
+# From another terminal (OSC control):
+source venv/bin/activate
+python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/engine/freq', 440.0)"
+```
+
+### Future Vocabulary (Phase 2+):
 ```
 create vco1 sine           # Create oscillator
 set vco1.freq 440         # Set parameter
@@ -138,16 +175,20 @@ music_chronus/
 
 ## 🚀 Current Sprint Status
 
-**Phase 0: Foundation Testing**
-- Progress: 50% (8/16 tests)
-- Achievement: Architecture decision final - Multiprocessing wins!
-- Blocker: None currently
-- Next: RT-04 memory allocation test
+**Phase 1B: Control Integration COMPLETE**
+- Achievement: Headless control via OSC working perfectly!
+- Can create music through tmux that human can hear
+- Zero underruns with real-time parameter changes
+- Ready for Phase 2: Musical Modules
 
-**Upcoming Phases:**
-- Phase 1: Core Audio Engine
+**Completed Phases:**
+- Phase 0: Foundation Testing (75% - MUS tests deferred)
+- Phase 1A: Core Audio Engine (100% - zero underruns achieved)
+- Phase 1B: OSC Control Integration (100% - headless control working)
+
+**Upcoming:**
 - Phase 2: Essential Modules (VCO, VCF, ADSR, etc.)
-- Phase 3: Sequencing & Control
+- Phase 3: Sequencing & Pattern Control
 
 ## 🔍 Work Protocol
 

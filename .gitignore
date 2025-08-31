@@ -4,20 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 venv/
+env/
 ENV/
-.venv
-*.egg-info/
-dist/
-build/
-
-# Testing
-.coverage
-.pytest_cache/
-htmlcov/
-.tox/
-.hypothesis/
 
 # IDE
 .vscode/
@@ -26,21 +15,26 @@ htmlcov/
 *.swo
 *~
 
-# Audio files (generated during testing)
-*.wav
-*.mp3
-*.ogg
-/tmp/
-
-# Logs
-*.log
-
 # OS
 .DS_Store
 Thumbs.db
 
 # Project specific
-/output/
-/recordings/
-/patches/
-*.patch
+*.log
+*.wav
+*.mp3
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Local config overrides
+config/local.overrides.yml
+
+# Test outputs
+tests/results/*.json
+tests/results/*.txt
+
+# Archive (optional - uncomment to exclude from git)
+# archive/

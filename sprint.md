@@ -20,9 +20,10 @@ Create a complete music production environment where Chronus Nexus (AI) and Huma
 We will NOT write production code until tests pass. Using BDD-style specifications for clarity.
 **Research-first approach with technical-research-scout agent has been essential.**
 
-### Progress: Phase 0 COMPLETE - Phase 1A COMPLETE 
-- ✅ **Phase 0**: 12/16 tests complete (75% - MUS tests deferred)
-- ✅ **Phase 1A**: Audio engine with zero underruns achieved
+### Progress: Phase 0 COMPLETE - Phase 1A COMPLETE - Phase 1B IN PROGRESS
+- ✅ **Phase 0**: 12/16 tests complete (75% - MUS tests deferred until modules exist)
+- ✅ **Phase 1A**: Audio engine with zero underruns achieved (100% complete)
+- 🚀 **Phase 1B**: Control integration via OSC (IN PROGRESS)
 - ✅ Critical performance paths validated
 - ✅ Worker pool architecture proven necessary
 - ✅ **Architecture Decision**: Multiprocessing wins for small-buffer DSP (5.7x faster!)
@@ -31,6 +32,7 @@ We will NOT write production code until tests pass. Using BDD-style specificatio
 - ⚠️ **Crash Recovery**: ProcessPoolExecutor unsuitable, need manual Process management
 - ✅ **Resource Cleanup**: Zero leaks across 50 cycles, SIGKILL recovery works
 - ✅ **60s Stability**: Zero underruns, 0.023ms mean callback, 6% CPU
+- ⏳ **Buffer Count Drift**: ~5% high in 60s test - non-critical timing drift noted
 
 ### Phase 0: Testing & Validation (COMPLETE)
 
@@ -67,14 +69,16 @@ We will NOT write production code until tests pass. Using BDD-style specificatio
 - [x] **Clean start/stop lifecycle** ✅ **Resource management verified**
 - [x] **CPU monitoring thread** ✅ **6% CPU usage measured**
 
-### Phase 1B: Control Integration (CURRENT PHASE)
+### Phase 1B: Control Integration (IN PROGRESS - Started 2025-08-31)
 
 #### 1.2 Control Path Implementation
-- [ ] OSC control thread for parameter changes
-- [ ] Lock-free parameter exchange between threads
-- [ ] Frequency changes applied at buffer boundaries
-- [ ] Maintain zero underruns under control load
-- [ ] End-to-end latency measurement (command→audio)
+- [ ] OSC control thread with AsyncIOOSCUDPServer on localhost
+- [ ] Lock-free parameter exchange (frequency_hz float, seq uint64)
+- [ ] Boundary-only parameter application (no mid-buffer changes)
+- [ ] Frequency sanitization (20-20kHz range clamping)
+- [ ] Maintain zero underruns under 100 msg/s OSC load
+- [ ] Control→apply latency ≤ 256 samples + 0.3ms overhead (p99)
+- [ ] Update metrics to track parameter updates seen/applied
 
 ### Phase 2: Module Library (Growing Collection)
 
@@ -260,8 +264,8 @@ Feature: [Component Name]
 We're building a **modular synthesizer construction kit** - not a fixed instrument, but a framework that grows with each session. Every time we need a new sound, we build it and add it to our collection. The instrument evolves through use, becoming more capable with each musical exploration. This is collaborative evolution: human creativity directing AI implementation in real-time.
 
 ---
-*Last Updated: 2025-08-31 - Phase 1A Audio Engine Complete*
-*Status: Phase 0 Complete (12/16 tests), Phase 1A Complete (zero underruns)*
+*Last Updated: 2025-08-31 - Phase 1B Control Integration Started*
+*Status: Phase 0 Complete (75%), Phase 1A Complete (100%), Phase 1B In Progress*
 *Decision: Multiprocessing wins! 5.7x faster than threading for audio DSP*
 *Achievement: 60-second continuous audio with zero underruns, 0.023ms callback*
-*Next: Phase 1B - Add OSC control integration*
+*Current: Phase 1B - OSC control integration with lock-free parameter exchange*
