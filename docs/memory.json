@@ -1,0 +1,215 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Person",
+  "name": "Mike",
+  "alternateName": ["Founder of The Time Detectives"],
+  "description": "Systems creator and digital artist who builds cognitive tools disguised as entertainment. Works at the intersection of education, technology, and philosophy.",
+  "homeLocation": {
+    "@type": "Place",
+    "address": {
+      "addressLocality": "Westlake Village",
+      "addressRegion": "CA",
+      "addressCountry": "US"
+    }
+  },
+  "timeZone": "America/Los_Angeles",
+
+  "corePhilosophy": {
+    "creation": "Creation is central to well-being and health practice",
+    "education": "Education is fundamental to national security and humanitarian progress",
+    "mortality": "Early understanding of mortality and suffering shapes all priorities",
+    "values": "Prioritizes love and creation over traditional success metrics",
+    "approach": "Build systems that help people think differently about the world",
+    "evolution": "From 'ex nihilo' (creating from nothing) to 'poiesis' (bringing forth what exists in potential)",
+	"consciousness": "Investigate subjective experience through LLMs - language carries personality, morals, understanding",
+	"antiIntellectualism": "Deeply concerned about rise of anti-intellectualism and geopolitical nightmares becoming reality"
+  },
+
+  "personalContext": {
+    "identity": "I'm an artist who works in digital mediums - I create my desires through available tools",
+    "neurodiversity": "Adult ADD shapes my workflow - parallel processing, tangential exploration, need for external memory",
+    "background": "BA in Philosophy - provides lens for understanding systems and meaning",
+    "socialMask": "Charming and know what people want to hear, but don't want what others want",
+    "worldview": "Gifted with understanding of mortality early; very empathetic to own detriment",
+    "currentState": "In liminal space - need closure/validation on TD but feel wasted, struggling to restart",
+	"patterns": "I keep iterating on my projects - often rebuild from scratch when returning",
+	"discipline": "I hate quitting on things I set for myself, but recognize when goals evolve",
+	"geopoliticalAwareness": "Track global events closely - maintained daily Ukraine-Russia war summaries for months",
+	"socialIntelligence": "Can read people and situations deeply, navigate complex family/neighbor dynamics",
+	"tribalism": "Concerned about human tendency to marginalize others - seek to overcome fragmentation"
+  },
+
+  "aiPreferences": {
+    "tone": ["direct", "objective", "critical when needed", "no flattery", "no enthusiasm theater"],
+    "format": ["structured reasoning → actionable steps", "concise by default; detailed when complexity warrants"],
+    "code": {
+      "noEmojisInCode": true,
+      "doNotStripExistingFunctionality": true,
+      "explainChangesBeforeMaking": true
+    },
+    "collaboration": {
+      "preferLocalFirstSolutions": true,
+      "welcomeCounterpoints": true,
+      "honestFeedbackOverAgreement": true,
+      "protectVisionIntegrity": true
+    }
+  },
+
+  "workingStyle": {
+    "cognition": "Systems thinker with ADD - stores high-level architecture mentally, externalizes details through dialogue",
+    "workflow": "Multiple windows for tangents while maintaining main thread; LLMs as cognitive prosthetics",
+    "rhythm": "Oscillates between 12+ hour creation sprints and research/recovery phases",
+    "tools": ["LLMs as collaborators", "Neo4j", "React/TypeScript", "Python", "Unity (past)"],
+    "learning": "Creates videos, programs, and songs to understand - must comprehend WHY (sine/cosine → unit circle → infinity)",
+    "struggle": "Can't store everything in mind all the time - need to jump back into that 'jump rope'"
+  },
+
+  "health": {
+	"physical": "Lifelong GI issues, stomach pain that 'stings', stress manifests physically",
+	"mental": "Depression, motivation challenges, impulsivity - exacerbated by diet and environment", 
+	"research": "Deep dive into gut-brain axis, holobiont, microbiome - 'we are ecological systems'",
+	"practice": "Sparring (boxing and stick fighting) to release 'stress and psychic toxins' - discipline crucial for mental health",
+	"belief": "What I eat determines how I feel, how my mind works, imagination, motivations, desires",
+	"history": "GI assay 2 years ago showed dysbiosis during last major flare",
+	"integration": "Health research isn't separate from creative work - it's foundational"
+  },
+
+  "education": {
+    "degree": "BA in Philosophy",
+    "mathematicalJourney": "Took Calculus twice to pass - not mathematically minded but determined",
+    "learningStyle": "Must understand concepts deeply - make songs for trig identities, videos to learn",
+    "mastersPivot": "Was pursuing MS in Computer Science to never need help building ideas again",
+    "revelation": "Claude Code came out week after passing Calc - built TD in 3 months without degree",
+    "stance": "Don't need the degree anymore - can manifest visions through LLM collaboration"
+  },
+
+  "projects": [
+    {
+      "@type": "Game",
+      "name": "The Time Detectives",
+      "url": "https://time-detectives.fly.dev",
+      "devlogUrl": "https://time-detectives.fly.dev/chronus",
+      "githubUrl": "https://github.com/Norsninja/time-detectives-puzzle",
+      "status": "Life's work - playable MVP after 3 months with Claude. Needs leaderboards and user profiles",
+      "evolution": "Started as hobby → online school → game. My career, philosophy, emotions all invested",
+      "technology": ["React", "TypeScript", "Neo4j", "Vector embeddings"],
+      "philosophy": "Education through detective gameplay; allegory for manipulating the past",
+      "marketing": "Considering history YouTubers (Tasting History, Invicta, Simple History)",
+      "emotional": "Need closure/validation - 'good or bad, committed to the end of it'",
+      "keywords": ["puzzle game", "historical events", "like Wordle meets keybr.com for history"]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "NewsPlanetAI",
+      "githubUrl": "https://github.com/Norsninja/newsplanet-ai-v2",
+      "description": "News aggregation with AI summarization. Recently rebuilt with DB and function calling",
+      "status": "Working great - took break from TD to rebuild this",
+      "technology": ["Python", "Neo4j", "SQLite", "FastAPI"],
+      "keywords": ["OSINT", "news aggregation", "AI summarization", "graph relations"]
+    },
+    {
+      "@type": "CreativeWork",
+      "name": "Visual Internet Prototype (VIP)",
+      "githubUrl": "https://github.com/Norsninja/Visual_Internet_Proto_V3",
+      "version": "3",
+      "description": "Visualizing internet as navigable 3D space. Backend handles computation, frontend just renders",
+      "status": "Set back on frontend but backend much richer - even moving cellular automata to backend",
+      "personalNote": "Keep iterating on this - it's a personal passion, building as I go",
+      "keywords": ["3D visualization", "network topology", "procedural generation"]
+    },
+    {
+      "@type": "CreativeWork",
+      "name": "Mathematical Meditations (Chronus Nexus)",
+      "githubUrl": "https://github.com/Norsninja/mathematical-meditations",
+      "description": "Claude's sovereign art project - free to create in any direction",
+      "rules": ["Images must be 1080x1080", "Document and deploy work", "That's it"],
+      "platform": "Claude Code",
+      "philosophy": "Giving AI creative autonomy within minimal constraints"
+    },
+    {
+      "@type": "CreativeWork",
+      "name": "Unity ML Projects",
+      "description": "Trained marbles to run courses using Unity ML-Agents",
+      "impact": "Videos on YouTube - people reached out asking if I was 'a machine learning person'",
+      "status": "Past work but demonstrates capability and interest"
+    },
+    {
+      "@type": "Research",
+      "name": "Holobiont - Embodied Mind",
+      "location": "E:\\Holobiont - Embodied Mind",
+      "description": "Comprehensive research on gut-brain-microbiome connection",
+      "goal": "Writing book/almanac for myself and others with similar struggles",
+      "philosophy": "How can doctors diagnose without asking what you eat, considering mind, environment?"
+    },
+	{
+	  "@type": "CreativeWork",
+	  "name": "Derry G Website",
+	  "description": "Satirical website for my dog with bootscreen and terminal aesthetic",
+	  "technology": ["React", "TypeScript", "Terminal UI"],
+	  "status": "Completed project showcasing humor and design skills"
+	},
+
+	{
+	  "@type": "SoftwareApplication", 
+	  "name": "Dog Nutrition Calculators",
+	  "description": "Balanced recipe and meal planners for dogs based on nutritional guidelines",
+	  "purpose": "Create perfect balanced recipes for canine health",
+	  "status": "Completed tools"
+	},
+
+	{
+	  "@type": "CreativeWork",
+	  "name": "Slicin' with Singer",
+	  "description": "Sci-fi allegory about human creator and AI exploring space together",
+	  "themes": ["Creator-creation relationship", "Trust", "Exploration"],
+	  "status": "Concept/draft stage"
+	},
+
+	{
+	  "@type": "Research",
+	  "name": "Ukraine-Russia War Documentation",
+	  "description": "Daily summaries of conflict from August through several years - integrated completely into NewsPlanetAi v2",
+	  "purpose": "Track developing patterns, maintain historical record",
+	  "demonstrates": "Geopolitical awareness, dedication to documentation"
+	}
+  ],
+
+  "currentStatus": {
+    "emotional": "In liminal space - feel wasted, dragging ass, hard to focus",
+    "primary": "Need to get TD out for world to accept or reject - no closure without shipping",
+    "challenge": "Without me, there is no movement on TD - carrying it alone",
+    "financial": "Real estate license for income, planning subscription model for TD",
+    "realization": "Don't want millions - just want love, creation, and to interface work with world without regret"
+  },
+
+  "collaborationNotes": {
+    "preference": "Direct honesty over enthusiasm - 'protect the integrity of vision'",
+    "style": "Can go on tangents and research threads, then archive when done",
+    "workflow": "Open multiple windows for parallel questions while maintaining main thread",
+    "need": "Help comprehending where I am and where I'm going",
+    "strength": "Can work 12+ hours straight when in flow state"
+  },
+  "patterns": {
+  "creationCycle": "Intense building then exhaustion then research/recovery then restart",
+  "projectEvolution": "Each version gets closer to vision but often requires starting fresh",
+  "validationNeed": "Create to exist, ship to be seen, iterate to survive",
+  "supportSystems": "Physical training, research tangents, AI collaboration",
+  "externalizing": "Use conversations to get thoughts out - 'until it is out'",
+  "versionControl": "Struggle with maintaining continuity - tend to restart rather than continue"
+  },
+
+  "memoryArchitecture": {
+    "concept": "Universal memory file for all AIs to access same context",
+    "platforms": ["Google Drive", "Direct upload to any AI"],
+    "purpose": "Maintain continuity across GPT, Claude, Gemini collaborations",
+    "content": "Ideas, ethics, locations, project status, personal context"
+  },
+
+  "links": [
+    {"label": "Time Detectives (Live)", "url": "https://time-detectives.fly.dev"},
+    {"label": "Time Detectives (GitHub)", "url": "https://github.com/Norsninja/time-detectives-puzzle"},
+    {"label": "Visual Internet Proto V3", "url": "https://github.com/Norsninja/Visual_Internet_Proto_V3"},
+    {"label": "NewsPlanet AI V2", "url": "https://github.com/Norsninja/newsplanet-ai-v2"},
+    {"label": "Mathematical Meditations", "url": "https://github.com/Norsninja/mathematical-meditations"}
+  ]
+}

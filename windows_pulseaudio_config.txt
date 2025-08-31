@@ -1,0 +1,10 @@
+# Simple PulseAudio config for Windows
+# Save this as: C:\Program Files (x86)\PulseAudio\etc\pulse\default.pa
+
+# Load audio drivers
+load-module module-waveout sink_name=output source_name=input
+load-module module-native-protocol-tcp auth-anonymous=1 auth-ip-acl=127.0.0.1;172.16.0.0/12
+
+# Set defaults
+set-default-sink output
+set-default-source input
