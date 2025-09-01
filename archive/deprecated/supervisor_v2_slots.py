@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-AudioSupervisor v2 - Slot-Based Architecture (FIXED)
-Implements Senior Dev's corrections:
-1. Zero-allocation in audio callback (return views, not copies)
-2. Correct ModuleHost API usage (add_module, queue_command, process_chain)
-3. Always drain commands (not conditional on event)
-4. Proper buffer copying with np.copyto
-5. Rings tied to slots, workers respawn in same slot
+AudioSupervisor v2 - Slot-Based Architecture
+Implements Senior Dev's recommended approach:
+1. Rings tied to slots (slot0/slot1), not workers
+2. Workers move between slots on failover  
+3. Audio callback switches which slot to read from
+4. Commands broadcast or routed to active slot
+5. No ring swapping - preserves worker-ring relationship
 """
 
 import multiprocessing as mp
@@ -49,9 +49,8 @@ STARTUP_GRACE_PERIOD = 1.0  # 1 second grace period for heartbeat detection
 
 class AudioRing:
     """
-    Sequential audio ring buffer - ZERO ALLOCATION VERSION
-    Returns views instead of copies to avoid allocation in audio callback
-    SENIOR DEV'S FIX: Rebind views per process to handle fork/spawn
+    Sequential audio ring buffer from supervisor_v2_surgical.py
+    Fixed to read sequentially, not skip buffers
     """
     
     def __init__(self, num_buffers=NUM_BUFFERS):
@@ -64,34 +63,13 @@ class AudioRing:
         
         # Pre-allocate numpy array in shared memory
         self.data = mp.Array('f', num_buffers * BUFFER_SIZE, lock=False)
+        self.np_data = np.frombuffer(self.data, dtype=np.float32).reshape(num_buffers, BUFFER_SIZE)
         
-        # SENIOR DEV'S FIX: Track PID and defer view creation
-        self._pid = os.getpid()
-        self._np_data = None
-        self._buffers = None
-        
-        # Initialize views for this process
-        self._ensure_views()
-    
-    def _ensure_views(self):
-        """
-        SENIOR DEV'S FIX: Rebind numpy views if in a different process
-        This handles the fork/spawn issue where views become stale
-        """
-        if self._np_data is None or self._pid != os.getpid():
-            # We're in a new process - rebind views to shared memory
-            self._np_data = np.frombuffer(self.data, dtype=np.float32).reshape(self.num_buffers, self.buffer_size)
-            self._buffers = [self._np_data[i] for i in range(self.num_buffers)]
-            self._pid = os.getpid()
-            
-            if os.environ.get('CHRONUS_VERBOSE'):
-                print(f"[RING] Rebound views in PID {self._pid}")
+        # Pre-allocate individual buffer views
+        self.buffers = [self.np_data[i] for i in range(num_buffers)]
     
     def write(self, audio_data):
         """Producer writes next buffer"""
-        # Ensure views are valid for this process
-        self._ensure_views()
-        
         next_head = (self.head.value + 1) % self.num_buffers
         
         # Check if full
@@ -101,7 +79,7 @@ class AudioRing:
         
         # Copy data to buffer
         idx = self.head.value
-        np.copyto(self._buffers[idx], audio_data[:BUFFER_SIZE])
+        np.copyto(self.buffers[idx], audio_data[:BUFFER_SIZE])
         
         # Update head
         self.head.value = next_head
@@ -109,25 +87,21 @@ class AudioRing:
     
     def read_latest(self):
         """
-        Consumer reads next buffer SEQUENTIALLY
-        Returns view for zero allocation, but caller must copy immediately
+        Consumer reads next buffer SEQUENTIALLY (Senior Dev's fix)
+        No skipping - reads each buffer in order
         """
-        # Ensure views are valid for this process
-        self._ensure_views()
-        
         # Check if empty
         if self.head.value == self.tail.value:
             return None
         
-        # Get current tail index
+        # Read from tail sequentially
         idx = self.tail.value
+        buffer = self.buffers[idx].copy()  # Return copy to avoid races
         
-        # Advance tail AFTER we return the view
-        # This ensures the buffer isn't overwritten while being read
+        # Advance tail by ONE (sequential reading)
         self.tail.value = (self.tail.value + 1) % self.num_buffers
         
-        # Return view of buffer (caller must copy immediately)
-        return self._buffers[idx]
+        return buffer
     
     def reset(self):
         """Reset to empty state"""
@@ -136,7 +110,7 @@ class AudioRing:
 
 
 def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, shutdown_flag):
-    """Worker process with CORRECT ModuleHost API"""
+    """Worker process with diagnostic logging"""
     
     # DIAGNOSTIC: Log worker start
     print(f"[WORKER] Slot {slot_id} starting, PID={os.getpid()}")
@@ -151,16 +125,18 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
     # Initialize module host
     module_host = ModuleHost(SAMPLE_RATE, BUFFER_SIZE)
     
-    # Create modular chain - CORRECT API: add_module
-    # FIXED: Modules don't accept module_id in constructor
-    sine_module = SimpleSine(SAMPLE_RATE, BUFFER_SIZE)
-    adsr_module = ADSR(SAMPLE_RATE, BUFFER_SIZE)
-    filter_module = BiquadFilter(SAMPLE_RATE, BUFFER_SIZE)
+    # Create modular chain
+    sine_module = SimpleSine(SAMPLE_RATE, BUFFER_SIZE, module_id='sine')
+    adsr_module = ADSR(SAMPLE_RATE, BUFFER_SIZE, module_id='adsr')
+    filter_module = BiquadFilter(SAMPLE_RATE, BUFFER_SIZE, module_id='filter')
     
-    # Add modules to host (chain order)
-    module_host.add_module('sine', sine_module)
-    module_host.add_module('adsr', adsr_module)
-    module_host.add_module('filter', filter_module)
+    # Register modules (chain order)
+    module_host.register_module(sine_module)
+    module_host.register_module(adsr_module)
+    module_host.register_module(filter_module)
+    
+    # Buffer for output
+    output_buffer = np.zeros(BUFFER_SIZE, dtype=np.float32)
     
     # Timing for buffer production
     last_buffer_time = time.monotonic()
@@ -178,28 +154,31 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
     
     while not shutdown_flag.is_set():
         try:
-            # SENIOR DEV'S FIX: Always drain commands (don't gate on event)
-            # Use event as a hint, but always check
-            event.wait(timeout=0.0001)  # Very short wait
-            event.clear()
-            
-            # Drain all pending commands
-            while True:
-                cmd_bytes = command_ring.read()
-                if cmd_bytes is None:
-                    break
+            # Check for commands (non-blocking)
+            if event.wait(timeout=0.001):
+                event.clear()
                 
-                # Queue command for processing
-                module_host.queue_command(cmd_bytes)
-            
-            # Process queued commands
-            module_host.process_commands()
+                # Process all pending commands
+                while True:
+                    cmd_bytes = command_ring.read()
+                    if cmd_bytes is None:
+                        break
+                    
+                    try:
+                        op, dtype, module_id, param, value = unpack_command_v2(cmd_bytes)
+                        
+                        if op == CMD_OP_SET and dtype == CMD_TYPE_FLOAT:
+                            module_host.set_parameter(module_id, param, value)
+                        elif op == CMD_OP_GATE and dtype == CMD_TYPE_BOOL:
+                            module_host.send_gate(module_id, param, value)
+                    except Exception as e:
+                        pass  # Ignore unpacking errors
             
             # Produce audio buffer at correct rate
             current_time = time.monotonic()
             if current_time >= next_buffer_time - 0.001:  # 1ms early is OK
-                # Process module chain - CORRECT API: process_chain returns output
-                output_buffer = module_host.process_chain()
+                # Process module chain
+                module_host.process(output_buffer)
                 
                 # Write to ring
                 if audio_ring.write(output_buffer):
@@ -303,8 +282,9 @@ class AudioSupervisor:
             'last_failover_ms': 0
         })()
         
-        # Audio callback state - pre-allocate buffer
+        # Audio callback state
         self.last_good = np.zeros(BUFFER_SIZE, dtype=np.float32)
+        self.none_count = 0  # Track None reads
         
         # Monitor thread
         self.monitor_stop = threading.Event()
@@ -346,10 +326,7 @@ class AudioSupervisor:
         print("[SPAWN] New slot1 worker spawned")
     
     def audio_callback(self, outdata, frames, time_info, status):
-        """
-        Real-time audio callback - ZERO ALLOCATION VERSION
-        Senior Dev's fixes: use views and np.copyto
-        """
+        """Real-time audio callback - Senior Dev's approved version"""
         if status:
             print(f"[AUDIO] Status: {status}")
         
@@ -366,18 +343,18 @@ class AudioSupervisor:
             print(f"[SWITCH] Completed switch to slot {self.active_idx}")
             self.metrics.switches_performed += 1
         
-        # Read from active ring (returns view, not copy)
-        buffer_view = self.active_ring.read_latest()
+        # Read from active ring
+        buffer = self.active_ring.read_latest()
         
-        if buffer_view is not None:
-            # SENIOR DEV'S FIX: Copy view to last_good (allocation-free)
-            np.copyto(self.last_good, buffer_view)
+        if buffer is not None:
+            # Good buffer - use it and save as last_good
+            np.copyto(self.last_good, buffer)
+            outdata[:] = buffer.reshape(-1, 1)
         else:
-            # No buffer available - use existing last_good
+            # No buffer available - use last_good to avoid discontinuity
+            outdata[:] = self.last_good.reshape(-1, 1)
+            self.none_count += 1
             self.metrics.none_reads += 1
-        
-        # SENIOR DEV'S FIX: Copy to output (allocation-free, no reshape)
-        np.copyto(outdata[:, 0], self.last_good, casting='no')
         
         self.metrics.buffers_processed += 1
         
@@ -385,9 +362,12 @@ class AudioSupervisor:
         if os.environ.get('CHRONUS_VERBOSE'):
             current_time = time.monotonic()
             if current_time - self.last_diag_time > 1.0:
-                rms = np.sqrt(np.mean(self.last_good**2))
+                if buffer is not None:
+                    rms = np.sqrt(np.mean(buffer**2))
+                else:
+                    rms = np.sqrt(np.mean(self.last_good**2))
                 print(f"[DIAG] Callback: idx={self.active_idx}, buffers={self.metrics.buffers_processed}, " +
-                      f"none_reads={self.metrics.none_reads}, RMS={rms:.6f}")
+                      f"none_reads={self.none_count}, RMS={rms:.6f}")
                 self.last_diag_time = current_time
     
     def monitor_workers(self):
@@ -399,7 +379,6 @@ class AudioSupervisor:
         # Initialize tracking
         last_heartbeats = [0, 0]
         last_heartbeat_times = [time.monotonic(), time.monotonic()]
-        last_failure_log = 0  # For debouncing duplicate messages
         
         while not self.monitor_stop.is_set():
             try:
@@ -413,21 +392,18 @@ class AudioSupervisor:
                 # Check process sentinel first (always, no grace period)
                 for slot in [0, 1]:
                     worker = self.slot0_worker if slot == 0 else self.slot1_worker
+                    spawn_time = self.slot0_spawn_time if slot == 0 else self.slot1_spawn_time
                     
                     if worker and hasattr(worker, 'sentinel'):
                         if not worker.is_alive():
-                            # Debounce duplicate messages
-                            if current_time - last_failure_log > 1.0:
-                                detection_time = time.monotonic_ns()
-                                
-                                # Only switch if this is the active slot
-                                if slot == self.active_idx and not self.pending_switch:
-                                    self.handle_slot_failure(slot, detection_time)
-                                    last_failure_log = current_time
-                                elif slot != self.active_idx:
-                                    # Standby died - just log it
-                                    print(f"[MONITOR] Standby slot {slot} died (non-critical)")
-                                    last_failure_log = current_time
+                            detection_time = time.monotonic_ns()
+                            
+                            # Only switch if this is the active slot
+                            if slot == self.active_idx and not self.pending_switch:
+                                self.handle_slot_failure(slot, detection_time)
+                            elif slot != self.active_idx:
+                                # Standby died - just log it
+                                print(f"[MONITOR] Standby slot {slot} died (non-critical)")
                 
                 # Check heartbeats (with grace period)
                 for slot in [0, 1]:
@@ -452,23 +428,20 @@ class AudioSupervisor:
                         last_heartbeats[slot] = current_hb
                         last_heartbeat_times[slot] = current_time
                         
-                        # Check if standby is ready (ring has data)
+                        # Check if standby is ready
                         if slot != self.active_idx and not self.standby_ready:
-                            ring = self.slot1_audio_ring if slot == 1 else self.slot0_audio_ring
-                            if ring.head.value > 0:  # Has written at least one buffer
+                            if current_hb > 1:  # Has produced at least one buffer
                                 self.standby_ready = True
                                 print("[MONITOR] Standby slot ready for failover")
                     else:
                         # Check for timeout
                         if current_time - last_heartbeat_times[slot] > HEARTBEAT_TIMEOUT:
-                            # Worker appears hung - debounce duplicate messages
-                            if current_time - last_failure_log > 1.0:
-                                detection_time = time.monotonic_ns()
-                                
-                                if slot == self.active_idx and not self.pending_switch:
-                                    print(f"[MONITOR] Active slot {slot} heartbeat timeout")
-                                    self.handle_slot_failure(slot, detection_time)
-                                    last_failure_log = current_time
+                            # Worker appears hung
+                            detection_time = time.monotonic_ns()
+                            
+                            if slot == self.active_idx and not self.pending_switch:
+                                print(f"[MONITOR] Active slot {slot} heartbeat timeout")
+                                self.handle_slot_failure(slot, detection_time)
                 
                 time.sleep(0.01)  # 10ms monitoring interval
                 
@@ -561,7 +534,7 @@ class AudioSupervisor:
     def send_command(self, command_bytes):
         """
         Send command to workers
-        SENIOR DEV'S RECOMMENDATION: Broadcast only during switch
+        SENIOR DEV'S RECOMMENDATION: Broadcast during switch, otherwise active-only
         """
         # During switch or cleanup: broadcast to both slots
         if self.pending_switch or self.post_switch_cleanup_pending:
@@ -649,27 +622,18 @@ class AudioSupervisor:
         if os.environ.get('CHRONUS_VERBOSE'):
             disp.set_default_handler(self.handle_osc_message)
         
-        # Use environment variables for OSC configuration
-        osc_host = os.environ.get('CHRONUS_OSC_HOST', '127.0.0.1')
-        osc_port = int(os.environ.get('CHRONUS_OSC_PORT', '5005'))
-        
-        self.osc_server = ThreadingOSCUDPServer((osc_host, osc_port), disp)
+        self.osc_server = ThreadingOSCUDPServer(("127.0.0.1", 5005), disp)
         self.osc_thread = threading.Thread(target=self.osc_server.serve_forever)
         self.osc_thread.daemon = True
         self.osc_thread.start()
-        print(f"[OSC] OSC server listening on {osc_host}:{osc_port}")
+        print("[OSC] OSC server listening on port 5005")
     
     def start(self):
         """Start the audio supervisor with grace period"""
-        print("Starting AudioSupervisor v2 (slot-based, fixed)...")
+        print("Starting AudioSupervisor v2 (slot-based architecture)...")
         print(f"Ring depth: {NUM_BUFFERS} buffers")
         print(f"Heartbeat timeout: {HEARTBEAT_TIMEOUT*1000:.1f}ms")
         print(f"Startup grace period: {STARTUP_GRACE_PERIOD}s")
-        
-        # Map CHRONUS_PULSE_SERVER to PULSE_SERVER if needed (match engine.py pattern)
-        if 'CHRONUS_PULSE_SERVER' in os.environ and 'PULSE_SERVER' not in os.environ:
-            os.environ['PULSE_SERVER'] = os.environ['CHRONUS_PULSE_SERVER']
-            print(f"[CONFIG] Mapped CHRONUS_PULSE_SERVER -> PULSE_SERVER: {os.environ['PULSE_SERVER']}")
         
         # Start monitor thread
         self.monitor_thread.start()
@@ -753,12 +717,9 @@ class AudioSupervisor:
             self.slot1_worker.terminate()
             self.slot1_worker.join(timeout=0.5)
         
-        # Stop OSC with proper cleanup
+        # Stop OSC
         if self.osc_server:
             self.osc_server.shutdown()
-            self.osc_server.server_close()  # Clean up the UDP socket
-            if self.osc_thread and self.osc_thread.is_alive():
-                self.osc_thread.join(timeout=1.0)  # Wait for thread to finish
         
         print("Audio supervisor stopped")
 
@@ -767,7 +728,7 @@ def main():
     """Main entry point with argument parsing"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Audio Supervisor v2 - Slot-Based Fixed')
+    parser = argparse.ArgumentParser(description='Audio Supervisor v2 - Slot-Based')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     args = parser.parse_args()
     

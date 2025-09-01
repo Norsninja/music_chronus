@@ -6,12 +6,12 @@ Tests sentinel detection, standby respawn, and ModuleHost integration
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 import time
 import signal
 from pythonosc import udp_client
-from music_chronus.supervisor_v2_fixed import AudioSupervisor
+from music_chronus import AudioSupervisor
 
 def test_fast_failover():
     """Test that failover is back to <10ms with sentinel detection"""

@@ -6,10 +6,10 @@ Focus on core functionality without complex timing tests
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 import time
-from music_chronus.supervisor_v2_fixed import AudioSupervisor
+from music_chronus import AudioSupervisor
 
 def test_basic_startup():
     """Test that supervisor starts without errors"""

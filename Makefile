@@ -35,7 +35,7 @@ run:
 
 test-quick:
 	@echo "Running quick validation..."
-	. venv/bin/activate && python test_simple_validation.py
+	. venv/bin/activate && python archive/test_utilities/test_simple_validation.py
 
 test-audio:
 	@echo "Running audio accuracy tests..."
@@ -44,12 +44,12 @@ test-audio:
 
 failover:
 	@echo "Testing failover performance..."
-	. venv/bin/activate && python test_modulehost_fixed.py
+	. venv/bin/activate && python archive/test_utilities/test_modulehost_fixed.py
 
 stress:
 	@echo "Running comprehensive test suite..."
 	@echo "NOTE: Ensure no background audio is playing!"
-	. venv/bin/activate && python test_modulehost_fixed.py
+	. venv/bin/activate && python archive/test_utilities/test_modulehost_fixed.py
 	. venv/bin/activate && python tests/test_module_chain_integration.py
 
 clean:

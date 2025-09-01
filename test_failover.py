@@ -28,9 +28,14 @@ def test_failover():
     time.sleep(2)
     
     print("2. Getting primary worker PID...")
-    # Get the supervisor PID first
-    result = subprocess.run(['pgrep', '-f', 'supervisor_v2_graceful'], 
+    # Get the supervisor PID first - try both versions
+    result = subprocess.run(['pgrep', '-f', 'supervisor_v2_slots_fixed'], 
                           capture_output=True, text=True)
+    
+    if not result.stdout:
+        # Try the other version
+        result = subprocess.run(['pgrep', '-f', 'supervisor_v2_graceful'], 
+                              capture_output=True, text=True)
     
     if not result.stdout:
         print("ERROR: Could not find supervisor process")
