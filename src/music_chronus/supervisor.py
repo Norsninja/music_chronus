@@ -174,11 +174,8 @@ class CommandRing:
         # Advance read index
         self.read_idx.value = (self.read_idx.value + 1) % self.num_slots
         
-        # Find null terminator
-        null_idx = cmd_data.find(b'\x00')
-        if null_idx > 0:
-            cmd_data = cmd_data[:null_idx]
-        
+        # Protocol v2 uses fixed 64-byte packets - DO NOT trim at null bytes!
+        # The packets contain binary data with embedded zeros
         return cmd_data
     
     def has_data(self):

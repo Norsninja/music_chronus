@@ -154,7 +154,8 @@ def audio_worker_process(worker_id: int, cmd_ring: CommandRing, audio_ring: Audi
     def handle_sigterm(signum, frame):
         nonlocal shutdown_flag
         shutdown_flag = True
-        print(f"Worker {worker_id} received SIGTERM")
+        timestamp = time.monotonic()
+        print(f"[{timestamp:.3f}] Worker {worker_id} (PID: {os.getpid()}) received SIGTERM")
     
     signal.signal(signal.SIGTERM, handle_sigterm)
     
@@ -192,7 +193,8 @@ def audio_worker_process(worker_id: int, cmd_ring: CommandRing, audio_ring: Audi
     buffer_seq = 0
     
     role = "Primary" if worker_id == 0 else "Standby"
-    print(f"{role} worker started with ModuleHost (PID: {os.getpid()})")
+    timestamp = time.monotonic()
+    print(f"[{timestamp:.3f}] {role} worker started with ModuleHost (PID: {os.getpid()})")
     
     # Set socket to non-blocking
     child_socket.setblocking(False)
@@ -203,37 +205,49 @@ def audio_worker_process(worker_id: int, cmd_ring: CommandRing, audio_ring: Audi
     # Main DSP loop
     while not shutdown_flag:
         try:
-            # Check for commands (non-blocking)
+            # Check for wakeup signal (non-blocking) - Senior Dev fix
             try:
                 wakeup = child_socket.recv(1)
-                # Got wakeup - check command ring
-                while cmd_ring.has_data():
-                    cmd_bytes = cmd_ring.read()
-                    if cmd_bytes:
-                        # FIXED: Check for shutdown command before queuing
-                        try:
-                            op, dtype, module_id, param, value = unpack_command_v2(cmd_bytes)
-                            
-                            # Handle shutdown command directly
-                            if module_id == 'system' and param == 'shutdown':
-                                print(f"Worker {worker_id} received shutdown command")
-                                shutdown_flag = True
-                                break
-                            else:
-                                # Queue normal commands to ModuleHost
-                                host.queue_command(cmd_bytes)
-                        except:
-                            # If unpacking fails, just queue it
-                            host.queue_command(cmd_bytes)
-                            
+                # Got wakeup nudge
             except (BlockingIOError, socket.error):
-                pass  # No commands available
+                pass  # No wakeup, that's fine
+            
+            # ALWAYS drain command ring, regardless of wakeup (Senior Dev critical fix)
+            while cmd_ring.has_data():
+                cmd_bytes = cmd_ring.read()
+                if cmd_bytes:
+                    # FIXED: Check for shutdown command before queuing
+                    try:
+                        op, dtype, module_id, param, value = unpack_command_v2(cmd_bytes)
+                        
+                        # Handle shutdown command directly
+                        if module_id == 'system' and param == 'shutdown':
+                            print(f"Worker {worker_id} received shutdown command")
+                            shutdown_flag = True
+                            break
+                        else:
+                            # Queue normal commands to ModuleHost
+                            host.queue_command(cmd_bytes)
+                            if os.environ.get('CHRONUS_VERBOSE'):
+                                print(f"[DEBUG] Worker {worker_id} queued: {module_id}.{param}={value}")
+                    except:
+                        # If unpacking fails, just queue it
+                        host.queue_command(cmd_bytes)
             
             if shutdown_flag:
                 break
                 
+            # Process queued commands at buffer boundary
+            host.process_commands()
+            
             # Generate audio buffer through module chain
             audio_buffer = host.process_chain()
+            
+            # Debug: Check if audio is non-zero
+            if os.environ.get('CHRONUS_VERBOSE') and buffer_seq % 100 == 10:
+                import numpy as np
+                rms = np.sqrt(np.mean(audio_buffer**2))
+                print(f"[DEBUG] Worker {worker_id} buffer RMS: {rms:.6f} (non-zero: {rms > 1e-6})")
             
             # Write to audio ring
             audio_ring.write(audio_buffer, buffer_seq)
@@ -264,7 +278,8 @@ def audio_worker_process(worker_id: int, cmd_ring: CommandRing, audio_ring: Audi
             
     # Cleanup
     child_socket.close()
-    print(f"Worker {worker_id} exited cleanly")
+    timestamp = time.monotonic()
+    print(f"[{timestamp:.3f}] Worker {worker_id} (PID: {os.getpid()}) exited cleanly")
 
 
 class AudioSupervisor:
@@ -328,6 +343,18 @@ class AudioSupervisor:
         
         # Get latest buffer from active ring (FIXED: read_latest only returns buffer)
         buffer = self.active_ring.read_latest()
+        
+        # Debug: Check what we're outputting (only once)
+        if not hasattr(self, '_debug_counter'):
+            self._debug_counter = 0
+        self._debug_counter += 1
+        
+        if self._debug_counter == 100 and os.environ.get('CHRONUS_VERBOSE'):
+            if buffer is not None:
+                rms = np.sqrt(np.mean(buffer**2))
+                print(f"[DEBUG] Callback outputting RMS: {rms:.6f} (non-zero: {rms > 1e-6})")
+            else:
+                print("[DEBUG] Callback got None from ring!")
         
         if buffer is not None:
             # Copy to output (maintains existing pattern)
@@ -558,6 +585,10 @@ class AudioSupervisor:
         Fixed: Added try/except for error handling
         """
         try:
+            # Verbose logging when enabled (Senior Dev suggestion)
+            if os.environ.get('CHRONUS_VERBOSE'):
+                print(f"OSC recv: {address} {args}")
+            
             parts = address.split('/')
             
             # Module parameter control: /mod/<module>/<param> <value>
@@ -627,8 +658,11 @@ class AudioSupervisor:
             port = int(os.environ.get('CHRONUS_OSC_PORT', '5005'))
             
             disp = dispatcher.Dispatcher()
-            # Map all OSC addresses to our handler
-            disp.map("/*", self.handle_osc_message)
+            # Map specific patterns for our OSC routes (Senior Dev fix)
+            disp.map("/mod/*/*", self.handle_osc_message)  # Module parameters
+            disp.map("/gate/*", self.handle_osc_message)    # Gate control
+            disp.map("/engine/*", self.handle_osc_message)  # Legacy control
+            disp.set_default_handler(self.handle_osc_message)  # Catch-all for diagnostics
             
             async def run_server():
                 server = osc_server.AsyncIOOSCUDPServer(
@@ -847,4 +881,6 @@ def main():
 
 
 if __name__ == '__main__':
+    # Note: Using default 'fork' method as spawn/forkserver break shared memory
+    # The SIGTERM messages are from old workers exiting, not current ones
     exit(main())
