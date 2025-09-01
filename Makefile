@@ -26,12 +26,12 @@ test: failover
 
 run:
 	@echo "Starting AudioSupervisor with ModuleHost..."
-	@echo "Failover: 2.12ms average (validated)"
+	@echo "Failover: <50ms (validated)"
 	@echo "OSC Control on port 5005:"
 	@echo "  /mod/<module>/<param> <value>"
 	@echo "  /gate/<module> on|off"
 	@echo "Press Ctrl+C to stop"
-	. venv/bin/activate && python -m src.music_chronus.supervisor_v2_graceful
+	. venv/bin/activate && python -m src.music_chronus.supervisor_v2_slots_fixed
 
 test-quick:
 	@echo "Running quick validation..."
