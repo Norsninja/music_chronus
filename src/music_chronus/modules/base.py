@@ -22,7 +22,7 @@ class BaseModule:
     - Zero allocations in process_buffer()
     - Boundary-only parameter updates
     - Configurable smoothing per parameter
-    - Thread-safe parameter setting
+    - Parameters applied at buffer boundaries (no locking needed)
     """
     
     def __init__(self, sample_rate: int, buffer_size: int):
@@ -69,12 +69,14 @@ class BaseModule:
     
     def set_param(self, param: str, value: float, immediate: bool = False) -> None:
         """
-        Set a parameter value.
+        Set a parameter value (applied at next buffer boundary).
         
         Args:
             param: Parameter name
             value: Target value
             immediate: If True, bypass smoothing
+            
+        Note: Called by ModuleHost at buffer boundaries, no locking required.
         """
         if param not in self.params:
             # First time setting this parameter
@@ -106,7 +108,13 @@ class BaseModule:
     def _update_smoothing(self) -> None:
         """
         Update parameter smoothing (called at buffer boundary).
-        Uses one-pole filter for smooth transitions.
+        
+        Uses exponential (one-pole filter) smoothing, not linear ramping.
+        This provides a smooth per-buffer step toward the target value.
+        
+        For future linear ramping across the buffer (if needed for stricter
+        anti-click), we would pre-compute a ramp array and apply per-sample.
+        Current approach is sufficient for MVP and allocation-free.
         """
         for param in self.param_targets:
             target = self.param_targets[param]

@@ -12,8 +12,8 @@ Responsibilities:
 
 import numpy as np
 import struct
-from collections import OrderedDict
-from typing import Dict, Optional, List, Tuple, Any
+from collections import OrderedDict, deque
+from typing import Dict, Optional, List, Tuple, Any, Deque
 from .modules.base import BaseModule
 
 
@@ -37,18 +37,19 @@ def pack_command_v2(op: int, dtype: int, module_id: str, param: str, value: floa
     Args:
         op: Operation (0=set, 1=gate, 2=patch)
         dtype: Data type (0=float, 1=int, 2=bool)
-        module_id: Module identifier (ASCII, max 16 chars)
-        param: Parameter name (ASCII, max 16 chars)
+        module_id: Module identifier ([a-z0-9_]{1,16})
+        param: Parameter name ([a-z0-9_]{1,16})
         value: Parameter value
         
     Returns:
         64-byte command packet
     """
-    # Validate module_id and param are ASCII
-    if not module_id.replace('_', '').replace('-', '').isalnum():
-        raise ValueError(f"Invalid module_id: {module_id}")
-    if not param.replace('_', '').replace('-', '').isalnum():
-        raise ValueError(f"Invalid param: {param}")
+    # Validate module_id and param match [a-z0-9_]{1,16}
+    # Strict ASCII policy: lowercase letters, digits, underscore only
+    if not module_id.replace('_', '').isalnum() or not module_id.replace('_', '').islower():
+        raise ValueError(f"Invalid module_id: {module_id} (must be [a-z0-9_]{{1,16}})")
+    if not param.replace('_', '').isalnum() or not param.replace('_', '').islower():
+        raise ValueError(f"Invalid param: {param} (must be [a-z0-9_]{{1,16}})")
         
     # Create 64-byte buffer
     cmd = bytearray(64)
@@ -142,7 +143,8 @@ class ModuleHost:
         ]
         
         # Command queue (applied at buffer boundaries)
-        self.pending_commands: List[bytes] = []
+        # Using deque for O(1) popleft() instead of list.pop(0) which is O(n)
+        self.pending_commands: Deque[bytes] = deque()
         
         # Statistics
         self.buffers_processed = 0
@@ -211,7 +213,7 @@ class ModuleHost:
         Called at buffer boundary for click-free parameter changes.
         """
         while self.pending_commands:
-            cmd_bytes = self.pending_commands.pop(0)
+            cmd_bytes = self.pending_commands.popleft()  # O(1) with deque
             
             try:
                 op, dtype, module_id, param, value = unpack_command_v2(cmd_bytes)
