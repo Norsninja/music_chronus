@@ -20,10 +20,10 @@ Create a complete music production environment where Chronus Nexus (AI) and Huma
 We will NOT write production code until tests pass. Using BDD-style specifications for clarity.
 **Research-first approach with technical-research-scout agent has been essential.**
 
-### Progress: Phase 0 COMPLETE - Phase 1A COMPLETE - Phase 1B IN PROGRESS
-- ✅ **Phase 0**: 12/16 tests complete (75% - MUS tests deferred until modules exist)
-- ✅ **Phase 1A**: Audio engine with zero underruns achieved (100% complete)
-- 🚀 **Phase 1B**: Control integration via OSC (IN PROGRESS)
+### Progress: Phase 0 COMPLETE - Phase 1 COMPLETE - Phase 2 IN PROGRESS
+- ✅ **Phase 0**: 12/16 tests complete (75% - MUS tests deferred to Phase 2)
+- ✅ **Phase 1**: Fault-tolerant audio engine complete (100% - 6ms failover achieved)
+- 🚀 **Phase 2**: Modular synthesis engine (PLANNING COMPLETE - Ready to implement)
 - ✅ Critical performance paths validated
 - ✅ Worker pool architecture proven necessary
 - ✅ **Architecture Decision**: Multiprocessing wins for small-buffer DSP (5.7x faster!)
@@ -80,15 +80,32 @@ We will NOT write production code until tests pass. Using BDD-style specificatio
 - [ ] Control→apply latency ≤ 256 samples + 0.3ms overhead (p99)
 - [ ] Update metrics to track parameter updates seen/applied
 
-### Phase 2: Module Library (Growing Collection)
+### Phase 2: Modular Synthesis Engine (IN PROGRESS - Started 2025-09-01)
 
-**Philosophy**: Build modules as needed, each session adds capabilities
+**Goal**: Build allocation-free, failover-safe module chain: SimpleSine → ADSR → BiquadFilter
 
-#### Week 1: Minimum Viable Synthesizer
-- [ ] SimpleSine - Basic oscillator to prove the system works
-- [ ] SimpleFilter - One good resonant filter
-- [ ] ADSR - Essential envelope for musical notes
-**Goal**: Make first musical sounds!
+#### 2.1 Foundation (Day 1)
+- [ ] BaseModule interface with preallocated buffers
+- [ ] ModuleHost orchestrator with chain management
+- [ ] Command Protocol v2 (64-byte structured commands)
+- [ ] Boundary-only parameter updates with smoothing
+
+#### 2.2 Core Modules (Day 2)
+- [ ] SimpleSine - Phase accumulator, sine-only initially
+- [ ] ADSR - Linear segments, sample-accurate timing
+- [ ] BiquadFilter - Transposed Direct Form II, RBJ coefficients
+
+#### 2.3 Integration (Day 3)
+- [ ] Wire ModuleHost into worker process
+- [ ] OSC handlers for /mod/* and /gate commands
+- [ ] Parameter smoothing (5-20ms per param type)
+- [ ] Test failover with active chain
+
+#### 2.4 Validation (Day 4)
+- [ ] MUS-01: Oscillator ±1 cent accuracy test
+- [ ] MUS-02: ADSR ±1 buffer timing test
+- [ ] RT test: Zero underruns at 100 msg/sec
+- [ ] Documentation and examples
 
 #### Module Cookbook (Build When Needed)
 

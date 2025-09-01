@@ -175,20 +175,24 @@ music_chronus/
 
 ## 🚀 Current Sprint Status
 
-**Phase 1B: Control Integration COMPLETE**
-- Achievement: Headless control via OSC working perfectly!
-- Can create music through tmux that human can hear
-- Zero underruns with real-time parameter changes
-- Ready for Phase 2: Musical Modules
+**Phase 2: Modular Synthesis Engine (STARTING)**
+- Planning complete with Senior Dev review
+- Target: SimpleSine → ADSR → BiquadFilter chain
+- Zero-allocation, failover-safe design validated
+- Ready to implement!
 
 **Completed Phases:**
-- Phase 0: Foundation Testing (75% - MUS tests deferred)
-- Phase 1A: Core Audio Engine (100% - zero underruns achieved)
-- Phase 1B: OSC Control Integration (100% - headless control working)
+- Phase 0: Foundation Testing (75% - MUS tests moved to Phase 2)
+- Phase 1: Fault-Tolerant Engine (100% - 6ms failover achieved!)
+  - Zero-allocation audio callback
+  - Clean resource management
+  - Full configurability
 
-**Upcoming:**
-- Phase 2: Essential Modules (VCO, VCF, ADSR, etc.)
-- Phase 3: Sequencing & Pattern Control
+**Current Focus:**
+- Command Protocol v2 (64-byte structured)
+- BaseModule + ModuleHost framework
+- Transposed Direct Form II biquad filter
+- Boundary-only updates with smoothing
 
 ## 🔍 Work Protocol
 
@@ -219,6 +223,16 @@ music_chronus/
 5. **Shared memory works**: Zero-copy audio transfer achieved
 6. **Test-first saves time**: Caught critical issues before building wrong system
 7. **Context matters**: Small audio buffers ≠ large scientific arrays
+
+## 🎯 Phase 2 Design Decisions (Locked)
+
+1. **Transposed Direct Form II (DF2T)** biquad with RBJ coefficients
+2. **Linear ADSR segments** for MVP (exponential later)
+3. **Sine-only oscillator** initially (saw/square + PolyBLEP later)
+4. **ASCII-only module IDs** ([a-z0-9_]{1,16})
+5. **Boundary-only parameter application** with per-buffer smoothing
+6. **Float64 phase/state**, Float32 output buffers
+7. **Command Protocol v2**: 64-byte fixed struct, zero parsing in hot path
 
 ## 🎯 Success Criteria
 
