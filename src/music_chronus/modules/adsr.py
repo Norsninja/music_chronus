@@ -77,6 +77,9 @@ class ADSR(BaseModule):
         Args:
             gate: True to trigger, False to release
         """
+        import os
+        if os.environ.get('CHRONUS_VERBOSE'):
+            pass  # Debug: gate={gate}, current_stage={self._stage}, current_gate={self._gate}
         self._next_gate = gate
         self._gate_changed = True
 
@@ -130,12 +133,19 @@ class ADSR(BaseModule):
         
         # Apply gate change at buffer boundary
         if self._gate_changed:
+            import os
+            old_gate = self._gate
             self._gate = self._next_gate
             self._gate_changed = False
+            
+            if os.environ.get('CHRONUS_VERBOSE'):
+                pass  # Debug: Processing gate change: {old_gate} -> {self._gate}, stage={self._stage}
             
             if self._gate:
                 # Gate on - start attack (allow retrigger)
                 self._stage = self.ATTACK
+                if os.environ.get('CHRONUS_VERBOSE'):
+                    pass  # Debug: Gate ON: Starting ATTACK
             elif self._stage != self.IDLE and self._stage != self.RELEASE:
                 # Gate off - enter release unless already idle/releasing
                 self._stage = self.RELEASE
@@ -143,6 +153,10 @@ class ADSR(BaseModule):
                 if self._level > self._denormal_threshold:
                     release_samples = max(1.0, self.params["release"] * self._ms_to_samples)
                     self._release_inc = self._level / release_samples
+                if os.environ.get('CHRONUS_VERBOSE'):
+                    pass  # Debug: Gate OFF: Entering RELEASE from stage {old_gate}
+            elif os.environ.get('CHRONUS_VERBOSE'):
+                pass  # Debug: Gate OFF but already in {['IDLE','ATTACK','DECAY','SUSTAIN','RELEASE'][self._stage]}
         
         # Process each sample with state machine
         # Sample-by-sample required for accurate timing

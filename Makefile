@@ -31,7 +31,7 @@ run:
 	@echo "  /mod/<module>/<param> <value>"
 	@echo "  /gate/<module> on|off"
 	@echo "Press Ctrl+C to stop"
-	. venv/bin/activate && python -m src.music_chronus.supervisor_v2_fixed
+	. venv/bin/activate && python -m src.music_chronus.supervisor_v2_graceful
 
 test-quick:
 	@echo "Running quick validation..."
