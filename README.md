@@ -5,7 +5,7 @@
 
 A real-time modular synthesizer built for human-AI collaboration. Create music through conversation, build instruments on demand, and explore sounds that emerge from the space between human creativity and algorithmic precision.
 
-**Status**: Phase 0 Complete (12/16 tests) + Phase 1A Complete | **Performance**: 5.9ms latency, zero underruns | **Architecture**: Validated & Working
+**Status**: Phase 2 Complete - Fault-Tolerant Modular Synthesis | **Performance**: 5.8ms latency, <50ms failover | **Architecture**: Slot-based with zero-allocation
 
 ---
 
@@ -46,11 +46,12 @@ Through rigorous testing, we've validated that a Python-based real-time synthesi
 
 | Component | Target | Achieved | Status |
 |-----------|--------|----------|--------|
-| **Total Latency** | <20ms | **5.9ms** | ✅ Professional grade |
+| **Total Latency** | <20ms | **5.8ms** | ✅ Professional grade |
 | **Audio Stability** | 0 dropouts | **Perfect** | ✅ 60+ second stress tests |
 | **Control Response** | <5ms | **0.068ms** | ✅ Instant parameter changes |
 | **Module Loading** | <100ms | **0.02ms** | ✅ Hot-swappable modules |
 | **Throughput** | 1000 msg/sec | **1000+** | ✅ Handles rapid automation |
+| **Failover Time** | <100ms | **<50ms** | ✅ Near-seamless recovery |
 
 ### Key Technical Discoveries
 
@@ -64,18 +65,22 @@ Through rigorous testing, we've validated that a Python-based real-time synthesi
 ```
 Human Commands → CLI Process → OSC Messages (0.068ms) → Worker Pool
                                                            ↓
+                                                   [Slot 0: Primary]
+                                                   [Slot 1: Standby]
+                                                           ↓
                                                       Synthesis Modules
                                                            ↓  
                                               Shared Memory (0.042ms)
                                                            ↓
                                                Audio Server (rtmixer)
                                                            ↓
-                                                   Output (5.9ms)
+                                                   Output (5.8ms)
                                                            ↓
                                                       Speakers
 ```
 
 **Total System Latency: ~6ms** (14ms headroom vs industry standard 20ms target)
+**Fault Tolerance: <50ms failover** with dual-slot architecture
 
 ## Musical Philosophy
 
@@ -86,22 +91,23 @@ This isn't trying to copy Ableton or Studio One. It's creating a new category: *
 ## Current Status
 
 **Phase 0: Foundation Testing** - ✅ COMPLETE (12/16 tests, 4 MUS tests deferred)
-- ✅ Audio performance validated (5.9ms latency, zero dropouts)
+- ✅ Audio performance validated (5.8ms latency, zero dropouts)
 - ✅ Control systems proven (sub-millisecond response)  
 - ✅ Architecture decided (multiprocessing + worker pools)
 - ✅ Process management working (crash isolation, clean shutdown)
 
-**Phase 1A: Core Audio Engine** - ✅ COMPLETE 
+**Phase 1: Core Audio Engine** - ✅ COMPLETE 
 - ✅ **Working audio engine** - 60+ seconds continuous playback, zero underruns
 - ✅ **Phase accumulator synthesis** - Clean 440Hz sine wave generation
 - ✅ **Performance metrics** - 0.023ms mean callback, 6% CPU usage
 - ✅ **Lock-free architecture** - Real-time safe audio generation
-- ✅ **Clean lifecycle management** - Graceful start/stop with resource cleanup
+- ✅ **OSC control integration** - Live parameter changes with zero underruns
 
-**Phase 1B: Control Integration** - 🔄 IN PROGRESS
-- OSC control thread for real-time parameter changes
-- Lock-free parameter exchange between control and audio threads  
-- **Goal**: Live frequency control while maintaining zero underruns
+**Phase 2: Modular Synthesis** - ✅ COMPLETE
+- ✅ **Fault-tolerant architecture** - <50ms failover with slot-based design
+- ✅ **Module chain working** - SimpleSine → ADSR → BiquadFilter
+- ✅ **Zero-allocation audio path** - Per-process view rebinding pattern
+- ✅ **Command continuity** - Full control before, during, and after failover
 
 ## Development Approach
 
@@ -186,43 +192,108 @@ This isn't just about making sounds - it's about pioneering human-AI collaborati
 
 ## Getting Started
 
-### Running the Phase 1A Audio Engine
+### Quick Start
 
 ```bash
-# Activate environment
+# 1. Activate environment
 source venv/bin/activate
 
-# Test the working audio engine
-python3 audio_engine_v2.py
+# 2. Start the synthesizer
+make run
+# Or directly: python -m src.music_chronus.supervisor_v2_slots_fixed
 
-# Commands:
-# start - Begin 440Hz sine wave generation
-# stop  - Stop audio engine
-# status - Show performance metrics
-# quit  - Exit
+# 3. From another terminal, send OSC commands:
+# Test tone
+python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/test', [])"
 
-# Run 60-second stability test
-python3 test_60s_stability.py
+# Control frequency
+python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/mod/sine/freq', 880.0)"
+
+# Gate control
+python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/gate/adsr', 1)"
+
+# Filter control
+python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/mod/filter/cutoff', 1000.0)"
 ```
 
-**Expected Output**: Zero underruns, ~0.02ms callback times, 6% CPU usage
+**Expected Output**: Clean sine wave with ADSR envelope and filtering, <50ms failover on worker crash
 
-### Future Module System
+### Working OSC Commands
 
-The completed system will support:
+```python
+# Current synthesizer chain: SimpleSine → ADSR → BiquadFilter
+
+# Test commands
+/test                       # Play test tone (440Hz)
+
+# Module parameters
+/mod/sine/freq <hz>        # Oscillator frequency (20-20000)
+/mod/sine/gain <0-1>       # Oscillator gain
+/mod/filter/cutoff <hz>    # Filter cutoff frequency
+/mod/filter/resonance <q>  # Filter Q factor
+
+# ADSR envelope
+/gate/adsr <0|1>           # Gate on/off
+/mod/adsr/attack <ms>      # Attack time
+/mod/adsr/decay <ms>       # Decay time  
+/mod/adsr/sustain <0-1>    # Sustain level
+/mod/adsr/release <ms>     # Release time
+```
+
+### Environment Variables
+
 ```bash
-# Load and connect modules
-> load oscillator
-> load filter
-> patch oscillator > filter > output
+# Enable verbose logging
+export CHRONUS_VERBOSE=1
 
-# Set parameters
-> set oscillator.freq 440
-> set filter.cutoff 1000
+# WSL2/WSLg users - set PulseAudio server
+export PULSE_SERVER=/mnt/wslg/PulseServer
+```
 
-# Create sequences
-> sequence kick: x...x...x...x...
-> play
+## Fault Tolerance
+
+The synthesizer implements a dual-slot architecture for seamless failover:
+
+- **Slot 0 (Primary)**: Active audio processing worker
+- **Slot 1 (Standby)**: Hot standby ready to take over
+- **Failover Time**: <50ms audio interruption on worker crash
+- **Command Continuity**: Full control maintained during failover
+- **Zero Allocation**: Audio callback uses pre-allocated buffers only
+
+When a worker crashes, the system automatically:
+1. Detects failure via heartbeat timeout
+2. Switches audio callback to standby slot
+3. Spawns replacement worker in failed slot
+4. Maintains all parameter states
+
+## Troubleshooting
+
+### No Audio Output
+```bash
+# Check PulseAudio is running
+pactl info
+
+# For WSL2 users, set PULSE_SERVER
+export PULSE_SERVER=/mnt/wslg/PulseServer
+
+# Verify audio devices
+python -c "import sounddevice; print(sounddevice.query_devices())"
+```
+
+### OSC Commands Not Working
+```bash
+# Verify OSC server is listening
+netstat -tuln | grep 5005
+
+# Test with simple message
+python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/test', [])"
+```
+
+### Worker Crashes
+```bash
+# Enable verbose logging to see failover
+export CHRONUS_VERBOSE=1
+python -m src.music_chronus.supervisor_v2_slots_fixed --verbose
 ```
 
 ## Contributing
