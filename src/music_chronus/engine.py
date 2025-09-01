@@ -151,13 +151,12 @@ class SoundDeviceBackend(AudioBackend):
         # [5] = sum_callback_us (for mean calculation)
         self.metrics = array.array('d', [0.0, 0.0, 0.0, 1000000.0, 0.0, 0.0])
         
-        # Set PulseAudio environment only if not already set
+        # Set PulseAudio environment only if explicitly configured
         pulse_server = os.environ.get('CHRONUS_PULSE_SERVER')
         if pulse_server and 'PULSE_SERVER' not in os.environ:
             os.environ['PULSE_SERVER'] = pulse_server
-        elif 'PULSE_SERVER' not in os.environ:
-            # Default for WSL2
-            os.environ['PULSE_SERVER'] = 'tcp:172.21.240.1:4713'
+        # Note: No default set - let system use its native audio configuration
+        # For WSL2 users, set CHRONUS_PULSE_SERVER='tcp:172.21.240.1:4713'
         
         # Verify device on init (only if verbose mode)
         if os.environ.get('CHRONUS_VERBOSE') == '1':

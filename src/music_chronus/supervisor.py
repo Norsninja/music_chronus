@@ -813,6 +813,10 @@ class AudioSupervisor:
         # Stop OSC server cleanly
         if self.osc_transport:
             self.osc_transport.close()
+        if self.osc_future and not self.osc_future.done():
+            # Cancel the future to trigger clean shutdown
+            if self.osc_loop:
+                self.osc_loop.call_soon_threadsafe(self.osc_future.cancel)
         if self.osc_loop and self.osc_loop.is_running():
             self.osc_loop.call_soon_threadsafe(self.osc_loop.stop)
         if self.osc_thread:
