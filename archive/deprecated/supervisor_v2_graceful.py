@@ -515,13 +515,17 @@ class AudioSupervisor:
                 self.primary_worker.terminate()
                 self.primary_worker.join(timeout=0.1)
             
-            # Move standby to primary slot
+            # Move standby to primary slot (worker AND rings)
             self.primary_worker = self.standby_worker
+            self.primary_audio_ring = self.standby_audio_ring
+            self.primary_cmd_ring = self.standby_cmd_ring
+            self.primary_event = self.standby_event
             self.standby_worker = None
             
-            # Reset standby rings for new worker
+            # Create new rings for new standby
             self.standby_audio_ring = AudioRing(num_buffers=NUM_BUFFERS)
             self.standby_cmd_ring = CommandRing(num_slots=COMMAND_RING_SLOTS)
+            self.standby_event = mp.Event()
             
         elif self.failed_side == 'standby':
             # Standby failed (was active), now using primary
@@ -529,13 +533,17 @@ class AudioSupervisor:
                 self.standby_worker.terminate()
                 self.standby_worker.join(timeout=0.1)
             
-            # Move primary to standby slot
+            # Move primary to standby slot (worker AND rings)
             self.standby_worker = self.primary_worker
+            self.standby_audio_ring = self.primary_audio_ring
+            self.standby_cmd_ring = self.primary_cmd_ring
+            self.standby_event = self.primary_event
             self.primary_worker = None
             
-            # Reset primary rings for new worker
+            # Create new rings for new primary
             self.primary_audio_ring = AudioRing(num_buffers=NUM_BUFFERS)
             self.primary_cmd_ring = CommandRing(num_slots=COMMAND_RING_SLOTS)
+            self.primary_event = mp.Event()
         
         # Spawn replacement standby
         self.spawn_standby_worker()
