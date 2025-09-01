@@ -134,6 +134,9 @@ class CommandRing:
         
         # Command storage
         self.buffer = mp.Array('c', num_slots * self.slot_size, lock=False)
+        
+        # Explicitly zero-initialize to prevent garbage interpretation
+        self.reset()
     
     def write(self, command_bytes):
         """Write command to ring"""
@@ -181,6 +184,17 @@ class CommandRing:
     def has_data(self):
         """Check if ring has data"""
         return self.read_idx.value != self.write_idx.value
+    
+    def reset(self):
+        """Reset ring buffer to clean state"""
+        # Zero indices
+        self.write_idx.value = 0
+        self.read_idx.value = 0
+        
+        # Zero buffer to prevent garbage interpretation
+        # mp.Array is already zero-initialized, but be explicit
+        for i in range(self.num_slots * self.slot_size):
+            self.buffer[i] = b'\x00'
 
 
 def pack_command(param: str, value: float) -> bytes:
