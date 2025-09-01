@@ -55,6 +55,10 @@ class AudioRing:
         self.buffer = mp.Array('f', total_frames, lock=False)  # float32
         self.sequence = mp.Array('Q', num_buffers, lock=False)  # Buffer sequence numbers
         
+        # Create persistent NumPy view to avoid allocations
+        # mp.Array already provides a buffer interface
+        self._np_buffer = np.frombuffer(self.buffer, dtype=np.float32)
+        
         # Metrics
         self.overruns = mp.Value('Q', 0, lock=False)
         self.underruns = mp.Value('Q', 0, lock=False)
@@ -85,6 +89,7 @@ class AudioRing:
         """
         Consumer reads newest buffer (main process)
         Implements "latest wins" policy - skips old buffers
+        Returns a view, not a copy - zero allocations
         """
         # Check if empty
         if self.head.value == self.tail.value:
@@ -94,15 +99,14 @@ class AudioRing:
         # Find newest complete buffer (one behind head)
         newest_idx = (self.head.value - 1) % self.num_buffers
         
-        # Read audio data
+        # Return view into persistent buffer - no allocation!
         offset = newest_idx * self.frames_per_buffer
-        # mp.Array needs to be accessed as numpy array directly
-        audio_data = np.array(self.buffer[offset:offset + self.frames_per_buffer], dtype=np.float32)
+        audio_view = self._np_buffer[offset:offset + self.frames_per_buffer]
         
         # Advance tail to just behind head (skip old buffers)
         self.tail.value = self.head.value
         
-        return audio_data
+        return audio_view
     
     def reset(self):
         """Reset ring to initial state"""
@@ -229,13 +233,19 @@ def audio_worker_process(worker_id: int, cmd_ring: CommandRing, audio_ring: Audi
     heartbeat_counter = 0
     buffer_seq = 0
     
-    print(f"Worker {worker_id} started (PID: {os.getpid()})")
+    role = "Primary" if worker_id == 0 else "Standby"
+    print(f"{role} worker started (PID: {os.getpid()})")
+    
+    # Set socket to non-blocking once (not in loop)
+    child_socket.setblocking(False)
+    
+    # Initialize deadline scheduling
+    next_deadline = time.perf_counter() + BUFFER_PERIOD
     
     # Main DSP loop
     while not shutdown_flag:
         try:
             # Check for commands (non-blocking)
-            child_socket.setblocking(False)
             try:
                 wakeup = child_socket.recv(1)
                 # Got wakeup - check command ring
@@ -269,8 +279,20 @@ def audio_worker_process(worker_id: int, cmd_ring: CommandRing, audio_ring: Audi
             heartbeat_counter += 1
             heartbeat_array[worker_id] = heartbeat_counter
             
-            # Simulate buffer period timing
-            time.sleep(BUFFER_PERIOD * 0.9)  # Slightly less to avoid drift
+            # Deadline-based pacing for consistent timing
+            now = time.perf_counter()
+            sleep_s = max(0.0, next_deadline - now)
+            
+            # Check shutdown before sleeping
+            if shutdown_flag:
+                break
+                
+            # Sleep until next deadline
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+            
+            # Schedule next deadline
+            next_deadline += BUFFER_PERIOD
             
         except KeyboardInterrupt:
             break
@@ -427,6 +449,9 @@ class AudioSupervisor:
         # OSC server
         self.osc_server = None
         self.osc_thread = None
+        self.osc_loop = None
+        self.osc_transport = None
+        self.osc_future = None
         
         # Metrics
         self.metrics = SupervisorMetrics()
@@ -472,15 +497,17 @@ class AudioSupervisor:
         """
         Main process audio callback - never stops during failover
         Reads from whichever ring is active
+        Zero-allocation path using view and copyto
         """
         if status:
             print(f"Audio status: {status}")
         
-        # Read from active ring (latest-wins policy)
-        audio_data = self.active_ring.read_latest()
+        # Read from active ring (latest-wins policy) - returns a view
+        audio_view = self.active_ring.read_latest()
         
-        if audio_data is not None and len(audio_data) == frames:
-            outdata[:, 0] = audio_data
+        if audio_view is not None and len(audio_view) == frames:
+            # Direct copy from view to output - no allocations
+            np.copyto(outdata[:, 0], audio_view, casting='no')
         else:
             # Silence on underrun
             outdata.fill(0)
@@ -695,21 +722,35 @@ class AudioSupervisor:
     def start_osc_server(self):
         """Start OSC server for control messages"""
         try:
+            # Get host/port from environment or use defaults
+            host = os.environ.get('CHRONUS_OSC_HOST', '127.0.0.1')
+            port = int(os.environ.get('CHRONUS_OSC_PORT', '5005'))
+            
             disp = dispatcher.Dispatcher()
             disp.map("/engine/*", self.handle_osc_message)
             
             async def run_server():
                 server = osc_server.AsyncIOOSCUDPServer(
-                    ('127.0.0.1', 5005), disp, asyncio.get_event_loop()
+                    (host, port), disp, asyncio.get_event_loop()
                 )
                 transport, protocol = await server.create_serve_endpoint()
-                print("OSC server listening on port 5005")
-                await asyncio.sleep(3600)  # Run for 1 hour
+                self.osc_transport = transport  # Store for cleanup
+                print(f"OSC server listening on {host}:{port}")
+                # Create a future that can be cancelled for clean shutdown
+                self.osc_future = asyncio.get_event_loop().create_future()
+                try:
+                    await self.osc_future
+                except asyncio.CancelledError:
+                    pass  # Clean shutdown
             
             def osc_thread_func():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(run_server())
+                self.osc_loop = loop  # Store for cleanup
+                try:
+                    loop.run_until_complete(run_server())
+                except RuntimeError:
+                    pass  # Loop stopped, normal shutdown
             
             self.osc_thread = threading.Thread(target=osc_thread_func, daemon=True)
             self.osc_thread.start()
@@ -769,6 +810,14 @@ class AudioSupervisor:
         
         print("Stopping AudioSupervisor...")
         
+        # Stop OSC server cleanly
+        if self.osc_transport:
+            self.osc_transport.close()
+        if self.osc_loop and self.osc_loop.is_running():
+            self.osc_loop.call_soon_threadsafe(self.osc_loop.stop)
+        if self.osc_thread:
+            self.osc_thread.join(timeout=2)
+        
         # Stop monitor
         self.monitor_stop.set()
         if self.monitor_thread:
@@ -826,8 +875,8 @@ if __name__ == "__main__":
             while True:
                 time.sleep(1)
                 status = supervisor.get_status()
-                print(f"Status: Active={status['active_worker']}, "
-                      f"PIDs=[{status['primary_pid']}, {status['standby_pid']}], "
+                print(f"Status: Active={status['active_worker']} (PID={status['primary_pid'] if status['active_worker'] == 'primary' else status['standby_pid']}), "
+                      f"Primary PID={status['primary_pid']}, Standby PID={status['standby_pid']}, "
                       f"Heartbeats=[{status['primary_heartbeat']}, {status['standby_heartbeat']}]")
         except KeyboardInterrupt:
             pass

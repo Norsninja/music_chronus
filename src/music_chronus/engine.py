@@ -27,9 +27,9 @@ BUFFER_SIZE = int(os.environ.get('CHRONUS_BUFFER_SIZE', '256'))
 CHANNELS = 1
 DEFAULT_FREQUENCY = 440.0  # A4 note
 
-# OSC Configuration
-OSC_HOST = "127.0.0.1"
-OSC_PORT = 5005
+# OSC Configuration (can be overridden by environment)
+OSC_HOST = os.environ.get('CHRONUS_OSC_HOST', '127.0.0.1')
+OSC_PORT = int(os.environ.get('CHRONUS_OSC_PORT', '5005'))
 
 # Frequency bounds
 MIN_FREQ = 20.0
@@ -151,16 +151,22 @@ class SoundDeviceBackend(AudioBackend):
         # [5] = sum_callback_us (for mean calculation)
         self.metrics = array.array('d', [0.0, 0.0, 0.0, 1000000.0, 0.0, 0.0])
         
-        # Set PulseAudio environment
-        os.environ['PULSE_SERVER'] = 'tcp:172.21.240.1:4713'
+        # Set PulseAudio environment only if not already set
+        pulse_server = os.environ.get('CHRONUS_PULSE_SERVER')
+        if pulse_server and 'PULSE_SERVER' not in os.environ:
+            os.environ['PULSE_SERVER'] = pulse_server
+        elif 'PULSE_SERVER' not in os.environ:
+            # Default for WSL2
+            os.environ['PULSE_SERVER'] = 'tcp:172.21.240.1:4713'
         
-        # Verify device on init
-        try:
-            devices = sd.query_devices()
-            default_out = sd.default.device[1]
-            print(f"Audio device: {devices[default_out]['name']}")
-        except Exception as e:
-            print(f"Warning: Could not query audio devices: {e}")
+        # Verify device on init (only if verbose mode)
+        if os.environ.get('CHRONUS_VERBOSE') == '1':
+            try:
+                devices = sd.query_devices()
+                default_out = sd.default.device[1]
+                print(f"Audio device: {devices[default_out]['name']}")
+            except Exception as e:
+                print(f"Warning: Could not query audio devices: {e}")
     
     def _audio_callback(self, outdata, frames, time_info, status):
         """
