@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import time
 import threading
 from pythonosc import udp_client
-from music_chronus.supervisor_v2_fixed import AudioSupervisor
+from music_chronus import AudioSupervisor
 
 def test_rt_guard():
     """Test real-time performance under OSC load"""
