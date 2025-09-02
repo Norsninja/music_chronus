@@ -24,6 +24,30 @@ from music_chronus.modules.base_v2 import BaseModuleV2
 from music_chronus.param_spec import CommonParams
 
 
+class TestSineModule(BaseModuleV2):
+    """Simple test sine module"""
+    def get_param_specs(self):
+        return {"frequency": CommonParams.frequency()}
+    
+    def initialize(self):
+        self.phase = 0.0
+    
+    def process_buffer(self, input_buffer, output_buffer):
+        output_buffer[:] = 0.5  # Simple test output
+
+
+class TestFilterModule(BaseModuleV2):
+    """Simple test filter module"""
+    def get_param_specs(self):
+        return {"gain": CommonParams.gain()}
+    
+    def initialize(self):
+        pass
+    
+    def process_buffer(self, input_buffer, output_buffer):
+        np.copyto(output_buffer, input_buffer)  # Pass-through
+
+
 class MockSupervisor:
     """Mock supervisor for testing patch flow"""
     
@@ -47,13 +71,11 @@ class MockSupervisor:
         if not self.router_enabled:
             return False
         
-        # Create module based on type
+        # Create module based on type (use local test modules)
         if module_type == "test_sine":
-            from tests.test_module_host_router_integration import TestSineGenerator
-            module = TestSineGenerator(44100, 256)
+            module = TestSineModule(44100, 256)
         elif module_type == "test_filter":
-            from tests.test_module_host_router_integration import PassThroughFilter
-            module = PassThroughFilter(44100, 256)
+            module = TestFilterModule(44100, 256)
         else:
             return False
         

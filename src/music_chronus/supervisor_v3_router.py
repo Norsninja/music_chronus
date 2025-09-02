@@ -21,22 +21,34 @@ from pythonosc.osc_server import ThreadingOSCUDPServer
 import threading
 from struct import pack
 
-# Add project root to sys.path
+# Add project root to sys.path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import base components from v2
-from .supervisor_v2_slots_fixed import (
-    AudioRing, CommandRing, SAMPLE_RATE, BUFFER_SIZE, NUM_CHANNELS,
-    NUM_BUFFERS, COMMAND_RING_SLOTS, HEARTBEAT_TIMEOUT, STARTUP_GRACE_PERIOD
-)
-
-# Import our modules
-from .module_host import ModuleHost, pack_command_v2, CMD_OP_SET, CMD_OP_GATE, CMD_TYPE_FLOAT, CMD_TYPE_BOOL
-from .patch_router import PatchRouter
-from .module_registry import get_registry
-from .modules.simple_sine import SimpleSine
-from .modules.adsr import ADSR
-from .modules.biquad_filter import BiquadFilter
+# Handle both module and script execution
+if __name__ == "__main__":
+    # Running as script - use absolute imports
+    from music_chronus.supervisor_v2_slots_fixed import (
+        AudioRing, CommandRing, SAMPLE_RATE, BUFFER_SIZE, NUM_CHANNELS,
+        NUM_BUFFERS, COMMAND_RING_SLOTS, HEARTBEAT_TIMEOUT, STARTUP_GRACE_PERIOD
+    )
+    from music_chronus.module_host import ModuleHost, pack_command_v2, CMD_OP_SET, CMD_OP_GATE, CMD_TYPE_FLOAT, CMD_TYPE_BOOL
+    from music_chronus.patch_router import PatchRouter
+    from music_chronus.module_registry import get_registry
+    from music_chronus.modules.simple_sine import SimpleSine
+    from music_chronus.modules.adsr import ADSR
+    from music_chronus.modules.biquad_filter import BiquadFilter
+else:
+    # Running as module - use relative imports
+    from .supervisor_v2_slots_fixed import (
+        AudioRing, CommandRing, SAMPLE_RATE, BUFFER_SIZE, NUM_CHANNELS,
+        NUM_BUFFERS, COMMAND_RING_SLOTS, HEARTBEAT_TIMEOUT, STARTUP_GRACE_PERIOD
+    )
+    from .module_host import ModuleHost, pack_command_v2, CMD_OP_SET, CMD_OP_GATE, CMD_TYPE_FLOAT, CMD_TYPE_BOOL
+    from .patch_router import PatchRouter
+    from .module_registry import get_registry
+    from .modules.simple_sine import SimpleSine
+    from .modules.adsr import ADSR
+    from .modules.biquad_filter import BiquadFilter
 
 # Check for router mode
 USE_ROUTER = os.environ.get('CHRONUS_ROUTER', '0') == '1'
