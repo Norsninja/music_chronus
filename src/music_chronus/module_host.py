@@ -121,16 +121,18 @@ class ModuleHost:
     Commands are applied at buffer boundaries for click-free operation.
     """
     
-    def __init__(self, sample_rate: int, buffer_size: int):
+    def __init__(self, sample_rate: int, buffer_size: int, use_router: bool = False):
         """
         Initialize ModuleHost with pre-allocated buffers.
         
         Args:
             sample_rate: System sample rate
             buffer_size: Buffer size in samples
+            use_router: Enable PatchRouter support (default False)
         """
         self.sr = sample_rate
         self.buffer_size = buffer_size
+        self.use_router = use_router
         
         # Module chain (OrderedDict preserves insertion order)
         self.modules: OrderedDict[str, BaseModule] = OrderedDict()
@@ -149,6 +151,15 @@ class ModuleHost:
         # Statistics
         self.buffers_processed = 0
         self.commands_processed = 0
+        
+        # Router support (CP2)
+        self.router = None
+        self.work_buffers: Dict[str, np.ndarray] = {}
+        self._processing_order: Optional[List[str]] = None
+        self._order_valid = False
+        
+        # Pre-allocate mixing buffer for router mode
+        self.mix_buffer = np.zeros(buffer_size, dtype=np.float32) if use_router else None
         
     def add_module(self, module_id: str, module: BaseModule) -> bool:
         """
@@ -196,6 +207,82 @@ class ModuleHost:
             Module instance or None
         """
         return self.modules.get(module_id)
+    
+    def enable_router(self, router) -> None:
+        """
+        Enable router-based processing (CP2).
+        
+        Args:
+            router: PatchRouter instance
+        """
+        if not self.use_router:
+            raise ValueError("ModuleHost not configured for router (use_router=False)")
+        
+        from .patch_router import PatchRouter
+        if not isinstance(router, PatchRouter):
+            raise ValueError("router must be a PatchRouter instance")
+        
+        self.router = router
+        self._order_valid = False
+        
+        # Pre-allocate work buffers for all modules in router
+        for module_id in router.modules.keys():
+            if module_id not in self.work_buffers:
+                self.work_buffers[module_id] = np.zeros(self.buffer_size, dtype=np.float32)
+    
+    def clear_router(self) -> None:
+        """Clear router and return to linear chain mode."""
+        self.router = None
+        self._order_valid = False
+        # Keep work_buffers allocated to avoid re-allocation if router re-enabled
+    
+    def router_add_module(self, module_id: str, module: BaseModule) -> bool:
+        """
+        Add module to both host and router (CP2 helper).
+        
+        Args:
+            module_id: Module identifier
+            module: Module instance
+            
+        Returns:
+            True if successful
+        """
+        if not self.router:
+            return False
+        
+        # Add to host's module collection
+        if not self.add_module(module_id, module):
+            return False
+        
+        # Add to router
+        if not self.router.add_module(module_id, module):
+            self.remove_module(module_id)  # Rollback
+            return False
+        
+        # Pre-allocate work buffer
+        if module_id not in self.work_buffers:
+            self.work_buffers[module_id] = np.zeros(self.buffer_size, dtype=np.float32)
+        
+        self._order_valid = False
+        return True
+    
+    def router_connect(self, source_id: str, dest_id: str) -> bool:
+        """Connect modules in router (CP2 helper)."""
+        if not self.router:
+            return False
+        success = self.router.connect(source_id, dest_id)
+        if success:
+            self._order_valid = False
+        return success
+    
+    def router_disconnect(self, source_id: str, dest_id: str) -> bool:
+        """Disconnect modules in router (CP2 helper)."""
+        if not self.router:
+            return False
+        success = self.router.disconnect(source_id, dest_id)
+        if success:
+            self._order_valid = False
+        return success
         
     def queue_command(self, cmd_bytes: bytes) -> None:
         """
@@ -256,6 +343,11 @@ class ModuleHost:
         # Process commands at buffer boundary
         self.process_commands()
         
+        # Router path (CP2)
+        if self.use_router and self.router:
+            return self._process_router_chain(input_buffer)
+        
+        # Linear chain path (original)
         # Start with input or silence
         if input_buffer is not None:
             np.copyto(self.chain_buffers[0], input_buffer, casting='no')
@@ -280,6 +372,82 @@ class ModuleHost:
             
         self.buffers_processed += 1
         return current_buf
+    
+    def _process_router_chain(self, input_buffer: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Process modules using router's DAG topology (CP2).
+        
+        CRITICAL: This must be allocation-free!
+        
+        Args:
+            input_buffer: Optional input
+            
+        Returns:
+            Output buffer (for CP2, assumes single sink)
+        """
+        # Get/cache processing order
+        if not self._order_valid:
+            self._processing_order = self.router.get_processing_order()
+            self._order_valid = True
+        
+        if not self._processing_order:
+            # Empty graph or error
+            self.chain_buffers[0].fill(0.0)
+            self.buffers_processed += 1
+            return self.chain_buffers[0]
+        
+        # Process each module in topological order
+        last_module_id = None
+        for module_id in self._processing_order:
+            module = self.modules.get(module_id)
+            if not module or not module.active:
+                continue
+            
+            # Prepare module (boundary updates)
+            if hasattr(module, 'prepare'):
+                module.prepare()
+            
+            # Get input connections
+            input_modules = self.router.get_module_inputs(module_id)
+            
+            # Mix inputs into module's input buffer
+            # Using mix_buffer as temporary input
+            if input_modules:
+                # Start with zeros
+                self.mix_buffer.fill(0.0)
+                
+                # Mix all inputs
+                for source_id in input_modules:
+                    if source_id in self.work_buffers:
+                        # Add source output to mix (in-place)
+                        np.add(self.mix_buffer, self.work_buffers[source_id], out=self.mix_buffer)
+            else:
+                # No inputs - use external input or silence
+                if input_buffer is not None and module_id == self._processing_order[0]:
+                    # First module gets external input
+                    np.copyto(self.mix_buffer, input_buffer, casting='no')
+                else:
+                    self.mix_buffer.fill(0.0)
+            
+            # Process module
+            module.process_buffer(self.mix_buffer, self.work_buffers[module_id])
+            
+            # Copy output to edge buffers for downstream modules
+            output_modules = self.router.get_module_outputs(module_id)
+            for dest_id in output_modules:
+                edge_buffer = self.router.get_edge_buffer(module_id, dest_id)
+                if edge_buffer is not None:
+                    np.copyto(edge_buffer, self.work_buffers[module_id], casting='no')
+            
+            last_module_id = module_id
+        
+        self.buffers_processed += 1
+        
+        # Return last module's output (single sink assumption for CP2)
+        if last_module_id and last_module_id in self.work_buffers:
+            return self.work_buffers[last_module_id]
+        else:
+            return self.chain_buffers[0]  # Fallback
         
     def reset(self) -> None:
         """
