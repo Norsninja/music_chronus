@@ -54,14 +54,19 @@ except ImportError:
 USE_ROUTER = os.environ.get('CHRONUS_ROUTER', '0') == '1'
 
 
-def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, shutdown_flag, use_router=False, patch_queue=None):
+def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, shutdown_flag, use_router=False, patch_queue=None, prime_ready=None):
     """Worker process with optional router support (CP3)
     
     Args:
         patch_queue: Optional Queue for receiving patch build commands (standby only)
+        prime_ready: Optional mp.Value to signal priming completion
     """
     
-    print(f"[WORKER] Slot {slot_id} starting, PID={os.getpid()}, router={use_router}")
+    # Disable GC for deterministic timing
+    import gc
+    gc.disable()
+    
+    print(f"[WORKER] Slot {slot_id} starting, PID={os.getpid()}, router={use_router}, GC disabled")
     
     # Set up signal handling
     def handle_sigterm(signum, frame):
@@ -191,6 +196,68 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                                 print(f"[WORKER] Patch commit failed: {e}")
                                 patch_ready = False
                             
+                    elif cmd_type == 'prime':
+                        # Prime operation: apply parameters and warm up
+                        prime_ops = patch_cmd.get('ops', [])
+                        warmup_count = patch_cmd.get('warmup', 8)
+                        
+                        print(f"[WORKER {slot_id}] Applying {len(prime_ops)} prime operations")
+                        
+                        # Apply all operations with immediate=True
+                        for op_type, module_id, param, value in prime_ops:
+                            if module_id not in patch_modules:
+                                print(f"[WORKER {slot_id}] Warning: module {module_id} not found")
+                                continue
+                                
+                            module = patch_modules[module_id]
+                            
+                            if op_type == 'mod':
+                                # Set parameter immediately
+                                module.set_param(param, value, immediate=True)
+                                print(f"[WORKER {slot_id}] Set {module_id}.{param} = {value}")
+                                
+                            elif op_type == 'gate':
+                                # param is None for gate ops, value is 0 or 1
+                                if hasattr(module, 'set_gate'):
+                                    module.set_gate(bool(value))
+                                else:
+                                    # Fallback to set_param
+                                    module.set_param('gate', float(value), immediate=True)
+                                print(f"[WORKER {slot_id}] Set {module_id} gate = {value}")
+                        
+                        # Warmup: Generate buffers to stabilize
+                        print(f"[WORKER {slot_id}] Warming up with {warmup_count} buffers...")
+                        warmup_results = []
+                        
+                        for i in range(warmup_count):
+                            output = module_host.process_chain()
+                            rms = np.sqrt(np.mean(output ** 2))
+                            warmup_results.append(rms)
+                            
+                            if i < 3:  # Log first few
+                                print(f"[WORKER {slot_id}] Warmup {i}: RMS={rms:.6f}")
+                        
+                        # Check for non-silent output
+                        max_rms = max(warmup_results) if warmup_results else 0.0
+                        if max_rms > 0.001:
+                            print(f"[WORKER {slot_id}] Prime complete! Max RMS={max_rms:.4f}")
+                            
+                            # Prefill ring with 4 buffers before signaling ready (matches keep_after_read=2)
+                            print(f"[WORKER {slot_id}] Prefilling ring with 4 buffers...")
+                            for i in range(4):
+                                output = module_host.process_chain()
+                                if audio_ring.write(output):
+                                    rms = np.sqrt(np.mean(output ** 2))
+                                    print(f"[WORKER {slot_id}] Prefill {i+1}: RMS={rms:.4f}")
+                            
+                            # Now signal ready
+                            if prime_ready:
+                                prime_ready.value = 1  # Signal supervisor
+                            patch_ready = True
+                        else:
+                            print(f"[WORKER {slot_id}] WARNING: Warmup silent, max RMS={max_rms:.6f}")
+                            # Don't set prime_ready if silent
+                            
                     elif cmd_type == 'abort':
                         # Clear patch state
                         patch_modules.clear()
@@ -200,6 +267,9 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                         for mid in list(module_host.modules.keys()):
                             module_host.remove_module(mid)
                         patch_ready = False
+                        # Reset prime readiness on abort
+                        if prime_ready:
+                            prime_ready.value = 0
                         print(f"[WORKER] Patch aborted")
                         
                 except Exception as e:
@@ -259,13 +329,14 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
             if produced_this_cycle > 1:
                 late_cycles += 1
             
-            # Verbose RMS check every 100 buffers
-            if os.environ.get('CHRONUS_VERBOSE') and buffer_count % 100 == 0:
+            # Verbose RMS check - more frequent after prime
+            log_interval = 10 if buffer_count < 50 else 100
+            if os.environ.get('CHRONUS_VERBOSE') and buffer_count % log_interval == 0:
                 rms = np.sqrt(np.mean(output_buffer ** 2))
                 if rms > 0.001:
-                    print(f"[WORKER {slot_id}] Audio generated! RMS={rms:.4f}")
+                    print(f"[WORKER {slot_id}] Buffer {buffer_count}: Audio generated! RMS={rms:.4f}, occ={occ}")
                 else:
-                    print(f"[WORKER {slot_id}] Silent buffer (RMS={rms:.6f})")
+                    print(f"[WORKER {slot_id}] Buffer {buffer_count}: Silent buffer (RMS={rms:.6f}), occ={occ}")
             
             # Update deadline for next buffer
             next_deadline += buffer_period
@@ -292,12 +363,23 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                     if hasattr(module, 'params'):
                         print(f"  {module_id}: active={module.active}, params={module.params}")
         
-        # Smart sleep/yield until next deadline
-        sleep_time = next_deadline - time.perf_counter()
-        if sleep_time > 0.001:
-            time.sleep(0.001)
-        elif sleep_time > 0:
-            time.sleep(0)  # Cooperative yield
+        # Two-phase sleep with busy-wait for precise timing
+        # Per Senior Dev: extend to 3ms tail for better timing stability
+        now_ns = time.perf_counter_ns()
+        deadline_ns = int(next_deadline * 1e9)
+        time_until_deadline_ns = deadline_ns - now_ns
+        
+        if time_until_deadline_ns > 3_000_000:  # > 3ms
+            # Coarse sleep until ~3ms before deadline
+            time.sleep((time_until_deadline_ns - 3_000_000) / 1e9)
+        
+        # Busy-wait for the final ≤3ms (actually ≤1ms per Senior Dev)
+        while time.perf_counter_ns() < deadline_ns - 1_000_000:  # Until 1ms before
+            pass  # Spin
+        
+        # Final precise wait
+        while time.perf_counter_ns() < deadline_ns:
+            pass  # Spin until exact deadline
     
     print(f"[WORKER] Slot {slot_id} shutting down")
 
@@ -380,6 +462,9 @@ class AudioSupervisorV3:
         self.worker_events[slot_idx].clear()
         self.worker_shutdown_flags[slot_idx].clear()
         
+        # Reset prime readiness when spawning
+        self.prime_ready[slot_idx].value = 0
+        
         # Mark standby as not ready when respawning
         if is_standby:
             self.standby_ready = False
@@ -396,7 +481,8 @@ class AudioSupervisorV3:
             target=worker_process,
             args=(slot_idx, audio_ring, command_ring,
                   self.heartbeat_array, self.worker_events[slot_idx],
-                  self.worker_shutdown_flags[slot_idx], use_router, patch_queue)
+                  self.worker_shutdown_flags[slot_idx], use_router, patch_queue,
+                  self.prime_ready[slot_idx])  # Pass prime_ready to worker
         )
         self.workers[slot_idx].start()
         
@@ -469,61 +555,62 @@ class AudioSupervisorV3:
         if self.patch_queue:
             self.patch_queue.put({'type': 'commit'})
             
-            # Wait briefly for patch to be built
-            time.sleep(0.05)  # 50ms for patch build + warmup
+            # Wait briefly for DAG build
+            time.sleep(0.02)  # 20ms for patch build
             
-            # Mark standby as ready
-            self.standby_ready = True
-            self.pending_switch = True
+            # Build prime operations (4-tuple format)
+            prime_ops = []
             
-            # Post-commit priming: Set sensible defaults for any oscillators and envelopes
-            print("[OSC] Priming patch with default values...")
             for module_id, module_info in modules_to_prime.items():
                 module_type = module_info.get('type', '')
                 
-                # Prime oscillators with audible settings
+                # Oscillators
                 if 'sine' in module_type or 'osc' in module_id:
-                    # Set frequency and gain
-                    freq_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'freq', 440.0)
-                    gain_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'gain', 0.2)
-                    self.slot0_command_ring.write(freq_cmd)
-                    self.slot1_command_ring.write(freq_cmd)
-                    self.slot0_command_ring.write(gain_cmd)
-                    self.slot1_command_ring.write(gain_cmd)
-                    print(f"[OSC] Primed {module_id}: freq=440, gain=0.2")
+                    prime_ops.append(('mod', module_id, 'freq', 440.0))
+                    prime_ops.append(('mod', module_id, 'gain', 0.2))
                 
-                # Prime envelopes with reasonable defaults
+                # Envelopes  
                 elif 'adsr' in module_type or 'env' in module_id:
-                    # Set ADSR parameters
-                    attack_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'attack', 10.0)
-                    decay_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'decay', 50.0)
-                    sustain_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'sustain', 0.7)
-                    release_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'release', 200.0)
-                    
-                    for cmd in [attack_cmd, decay_cmd, sustain_cmd, release_cmd]:
-                        self.slot0_command_ring.write(cmd)
-                        self.slot1_command_ring.write(cmd)
-                    
-                    # Auto-gate for testing (gate on briefly)
-                    gate_on = pack_command_v2(CMD_OP_GATE, CMD_TYPE_BOOL, module_id, 'gate', 1)
-                    self.slot0_command_ring.write(gate_on)
-                    self.slot1_command_ring.write(gate_on)
-                    print(f"[OSC] Primed {module_id}: ADSR defaults + gate on")
+                    prime_ops.append(('mod', module_id, 'attack', 10.0))
+                    prime_ops.append(('mod', module_id, 'decay', 50.0))
+                    prime_ops.append(('mod', module_id, 'sustain', 0.7))
+                    prime_ops.append(('mod', module_id, 'release', 200.0))
+                    prime_ops.append(('gate', module_id, None, 1))  # Gate on
                 
-                # Prime filters with open settings
+                # Filters
                 elif 'filter' in module_type or 'filt' in module_id:
-                    cutoff_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'cutoff', 2000.0)
-                    q_cmd = pack_command_v2(CMD_OP_SET, CMD_TYPE_FLOAT, module_id, 'q', 1.0)
-                    self.slot0_command_ring.write(cutoff_cmd)
-                    self.slot1_command_ring.write(cutoff_cmd)
-                    self.slot0_command_ring.write(q_cmd)
-                    self.slot1_command_ring.write(q_cmd)
-                    print(f"[OSC] Primed {module_id}: cutoff=2000, q=1.0")
+                    prime_ops.append(('mod', module_id, 'cutoff', 2000.0))
+                    prime_ops.append(('mod', module_id, 'q', 1.0))
+            
+            # Send prime command to standby
+            print(f"[OSC] Sending {len(prime_ops)} prime ops to standby worker")
+            self.patch_queue.put({
+                'type': 'prime',
+                'ops': prime_ops,
+                'warmup': 8
+            })
+            
+            # Wait for prime completion with timeout
+            standby_idx = 1 - self.active_idx.value
+            start_time = time.perf_counter()
+            timeout = 0.5  # 500ms timeout
+            
+            while time.perf_counter() - start_time < timeout:
+                if self.prime_ready[standby_idx].value == 1:
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    print(f"[OSC] Standby primed in {elapsed_ms:.1f}ms")
+                    self.standby_ready = True
+                    self.pending_switch = True
+                    break
+                time.sleep(0.01)  # Check every 10ms
+            else:
+                # Timeout - don't switch to potentially silent patch
+                print(f"[OSC] WARNING: Prime timeout after {timeout}s - NOT switching")
+                self.standby_ready = False  # Don't allow switch
+                # Note: standby worker continues trying to prime in background
         
         # Clear pending patch
         self.pending_patch.clear()
-        
-        print("[OSC] Patch committed - standby ready for switch")
     
     def handle_patch_abort(self, unused_addr):
         """Handle /patch/abort command (CP3)"""
@@ -624,17 +711,24 @@ class AudioSupervisorV3:
         
         # Handle pending switch at buffer boundary
         if self.pending_switch and self.standby_ready:
+            standby_idx = 1 - self.active_idx.value
+            
+            # Check prime readiness
+            prime_ready = self.prime_ready[standby_idx].value == 1
+            
             # Check if standby has produced at least one buffer
             standby_ring = self.slot1_audio_ring if self.active_idx.value == 0 else self.slot0_audio_ring
             standby_has_audio = (standby_ring.head.value != standby_ring.tail.value)
             
-            if standby_has_audio:
+            if prime_ready and standby_has_audio:
+                # Both conditions met - safe to switch
                 old_active = self.active_idx.value
                 new_active = 1 - old_active
                 self.active_idx.value = new_active
                 self.pending_switch = False
+                self.standby_ready = False  # Reset
                 self.target_idx = None
-                print(f"[CALLBACK] Switched to slot {new_active}")
+                print(f"[CALLBACK] Switched to slot {new_active} (primed & ready)")
                 self.failover_count += 1
                 
                 # Respawn old active as new standby with router capability
@@ -643,10 +737,12 @@ class AudioSupervisorV3:
                     self.spawn_slot0_worker(is_standby=True)
                 else:
                     self.spawn_slot1_worker(is_standby=True)
+            # Note: If not ready, we continue outputting from active slot
+            # No early return - always output audio
         
-        # Read from active ring using read_latest() - returns view not copy
+        # Read from active ring using latest-wins with cushion
         active_ring = self.slot0_audio_ring if self.active_idx.value == 0 else self.slot1_audio_ring
-        buffer_view = active_ring.read_latest()
+        buffer_view = active_ring.read_latest_keep(keep_after_read=2)  # Skip stale but keep bigger cushion (reduce popping)
         
         if buffer_view is not None:
             # Copy view to last_good (allocation-free)
@@ -659,6 +755,12 @@ class AudioSupervisorV3:
         # Copy last_good to output (allocation-free)
         np.copyto(outdata[:, 0], self.last_good)
         self.total_reads += 1
+        
+        # Log ring stats periodically (sparse)
+        if self.total_reads % 1000 == 0:
+            stats = active_ring.get_stats()
+            none_pct = (self.none_reads / self.total_reads) * 100
+            print(f"[STATS] occ={stats['occupancy']}, seq={stats['last_seq']}, none={none_pct:.1f}%")
     
     def run(self):
         """Main supervisor loop"""
@@ -667,14 +769,30 @@ class AudioSupervisorV3:
         # Start OSC server
         self.start_osc_server()
         
+        # Log device and configuration info
+        print(f"[CONFIG] Requested: SR={SAMPLE_RATE}Hz, BS={BUFFER_SIZE}, NB={NUM_BUFFERS}")
+        
         # Start audio
-        with sd.OutputStream(
+        stream = sd.OutputStream(
             samplerate=SAMPLE_RATE,
             blocksize=BUFFER_SIZE,
             channels=NUM_CHANNELS,
             dtype='float32',
             callback=self.audio_callback
-        ):
+        )
+        
+        with stream:
+            # Log actual device settings
+            actual_sr = stream.samplerate
+            actual_bs = stream.blocksize
+            device_info = sd.query_devices(stream.device, 'output')
+            print(f"[DEVICE] Actual: SR={actual_sr}Hz, BS={actual_bs}, Device={device_info['name']}")
+            
+            if actual_sr != SAMPLE_RATE:
+                print(f"[WARNING] Sample rate mismatch: requested {SAMPLE_RATE}, got {actual_sr}")
+            if actual_bs != BUFFER_SIZE:
+                print(f"[WARNING] Blocksize mismatch: requested {BUFFER_SIZE}, got {actual_bs}")
+            
             print("Audio started - Press Ctrl+C to stop")
             if self.router_enabled:
                 print("Router mode active - use /patch/* commands to build graphs")
@@ -682,11 +800,6 @@ class AudioSupervisorV3:
             try:
                 while not self.shutdown.is_set():
                     time.sleep(0.1)
-                    
-                    # Print stats periodically
-                    if self.total_reads > 0 and self.total_reads % 1000 == 0:
-                        none_read_pct = (self.none_reads / self.total_reads) * 100
-                        print(f"[STATS] None reads: {none_read_pct:.2f}%, Failovers: {self.failover_count}, Buffers out: {self.total_reads}")
             
             except KeyboardInterrupt:
                 print("\nShutting down...")

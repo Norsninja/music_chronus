@@ -41,10 +41,11 @@ class BiquadFilter(BaseModule):
         self.param_targets = self.params.copy()
 
         # Smoothing config (smooth cutoff and Q to prevent artifacts)
+        # Per Senior Dev: 20-30ms for cutoff and Q to reduce audible steps
         self.smoothing_samples.update({
             "mode": 0,  # No smoothing for mode switches
-            "cutoff": int(0.010 * sample_rate),  # 10ms
-            "q": int(0.010 * sample_rate),  # 10ms
+            "cutoff": int(0.025 * sample_rate),  # 25ms
+            "q": int(0.025 * sample_rate),  # 25ms
             "default": int(0.010 * sample_rate),
         })
 
