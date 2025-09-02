@@ -7,8 +7,14 @@ Tests topological sorting, cycle detection, and edge buffer management.
 
 import pytest
 import numpy as np
-from src.music_chronus.patch_router import PatchRouter
-from src.music_chronus.modules.base_v2 import BaseModuleV2
+import sys
+import os
+
+# Add src to path to match other tests
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from music_chronus.patch_router import PatchRouter
+from music_chronus.modules.base_v2 import BaseModuleV2
 
 
 class MockModule(BaseModuleV2):

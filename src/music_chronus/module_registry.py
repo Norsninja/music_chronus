@@ -7,6 +7,25 @@ Provides:
 - Lazy import mechanism
 - Module validation before registration
 - Factory pattern for instance creation
+
+IMPORTANT: Module ID vs Filename Convention
+--------------------------------------------
+There are two ways modules are identified:
+
+1. By filename during discovery (e.g., "example_sine_v2" from example_sine_v2.py)
+2. By registered module_id via @register_module decorator (e.g., "sine_v2")
+
+When using the registry:
+- For decorated modules: Use the registered ID (e.g., create_instance("sine_v2"))
+- For discovered modules without decorator: Use the filename stem (e.g., create_instance("simple_sine"))
+- Discovery maps filenames to paths, but decorated modules register under their chosen ID
+- To avoid confusion, consider naming files to match their module_id
+
+Example:
+    # File: sine_v2.py
+    @register_module("sine_v2")  # ID matches filename
+    class SimpleSineV2(BaseModuleV2):
+        ...
 """
 
 import importlib
@@ -118,8 +137,15 @@ class ModuleRegistry:
         """
         Lazy load a module when needed.
         
+        Note: module_id can be either:
+        - A registered module ID (e.g., "sine_v2" from @register_module decorator)
+        - A filename stem (e.g., "example_sine_v2" from discovery)
+        
+        If the file uses @register_module with a different ID than the filename,
+        the module will be registered under the decorator ID, not the filename.
+        
         Args:
-            module_id: Module identifier
+            module_id: Module identifier (registered ID or filename stem)
             
         Returns:
             Module class or None if not found

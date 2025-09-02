@@ -7,10 +7,14 @@ Tests that the registry can discover and lazily load modules.
 
 import pytest
 import os
+import sys
 import tempfile
 from pathlib import Path
 
-from src.music_chronus.module_registry import ModuleRegistry, get_registry
+# Add src to path to match other tests
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from music_chronus.module_registry import ModuleRegistry, get_registry
 
 
 class TestModuleDiscovery:
@@ -40,8 +44,8 @@ class TestModuleDiscovery:
             module_path = Path(tmpdir) / "test_sine.py"
             module_content = '''
 """Test module for discovery"""
-from src.music_chronus.modules.base_v2 import BaseModuleV2
-from src.music_chronus.param_spec import CommonParams
+from music_chronus.modules.base_v2 import BaseModuleV2
+from music_chronus.param_spec import CommonParams
 import numpy as np
 
 class TestSine(BaseModuleV2):
@@ -75,7 +79,7 @@ class TestSine(BaseModuleV2):
         registry = get_registry()
         
         # Import and register the example module directly
-        from src.music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
+        from music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
         # If not already registered (decorator may have run), register it
         if "sine_v2" not in registry._modules:
             registry.register("sine_v2", RegisteredSimpleSineV2)
@@ -96,7 +100,7 @@ class TestSine(BaseModuleV2):
         registry = get_registry()
         
         # Manually register since we cleared in setup
-        from src.music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
+        from music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
         registry.register("sine_v2", RegisteredSimpleSineV2)
         
         # Get module info
@@ -116,7 +120,7 @@ class TestSine(BaseModuleV2):
         registry.discover_modules()
         
         # Manually register since we cleared in setup
-        from src.music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
+        from music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
         registry.register("sine_v2", RegisteredSimpleSineV2)
         
         # List available
@@ -132,7 +136,7 @@ class TestSine(BaseModuleV2):
         registry = get_registry()
         
         # The example_sine_v2.py file registers as "sine_v2"
-        from src.music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
+        from music_chronus.modules.example_sine_v2 import RegisteredSimpleSineV2
         # Manually register since we cleared in setup
         registry.register("sine_v2", RegisteredSimpleSineV2)
         
