@@ -20,10 +20,11 @@ Create a complete music production environment where Chronus Nexus (AI) and Huma
 We will NOT write production code until tests pass. Using BDD-style specifications for clarity.
 **Research-first approach with technical-research-scout agent has been essential.**
 
-### Progress: Phase 0 COMPLETE - Phase 1 COMPLETE - Phase 2 IN PROGRESS
-- ✅ **Phase 0**: 12/16 tests complete (75% - MUS tests deferred to Phase 2)
-- ✅ **Phase 1**: Fault-tolerant audio engine complete (100% - 6ms failover achieved)
-- 🚀 **Phase 2**: Modular synthesis engine (PLANNING COMPLETE - Ready to implement)
+### Progress: Phase 0 COMPLETE - Phase 1 COMPLETE - Phase 2 COMPLETE - Phase 3 IN PROGRESS
+- ✅ **Phase 0**: Foundation testing (75% - MUS tests integrated into Phase 2)
+- ✅ **Phase 1**: Fault-tolerant audio engine (100% - <50ms failover achieved)
+- ✅ **Phase 2**: Modular synthesis with slot-based failover (100% - Production ready)
+- 🚀 **Phase 3**: Module Framework & Dynamic Routing (Started 2025-09-02)
 - ✅ Critical performance paths validated
 - ✅ Worker pool architecture proven necessary
 - ✅ **Architecture Decision**: Multiprocessing wins for small-buffer DSP (5.7x faster!)
@@ -82,7 +83,7 @@ We will NOT write production code until tests pass. Using BDD-style specificatio
 
 ### Phase 2: Modular Synthesis Engine (✅ COMPLETE - 2025-09-01)
 
-**Achievement**: 2.12ms failover with full ModuleHost integration!
+**Achievement**: <50ms failover with full ModuleHost integration, production deployed!
 
 #### Completed
 - ✅ BaseModule interface with preallocated buffers
@@ -148,15 +149,45 @@ We will NOT write production code until tests pass. Using BDD-style specificatio
 - Send/return buses
 - Master compression
 
-#### Module Development Workflow
-```python
-# When you need a new sound:
-> generate_module reverb  # Creates template
-> # AI writes DSP code in modules/reverb.py
-> reload reverb           # Hot-reload
-> patch vco > reverb > out
-> # New capability acquired!
-```
+### Phase 3: Module Framework & Dynamic Routing (IN PROGRESS - Started 2025-09-02)
+
+**Goal**: Transform fixed module chain into dynamically patchable modular synthesizer
+
+#### 3.1 Parameter Metadata System (Day 1)
+- [ ] ParamSpec class with type, range, units, smoothing
+- [ ] Enhanced BaseModule with get_param_specs()
+- [ ] Smoothing algorithms (linear, exponential)
+- [ ] Zero-allocation parameter updates
+
+#### 3.2 Module Registry (Day 2)
+- [ ] ModuleRegistry with @register_module decorator
+- [ ] Lazy imports only when building patches
+- [ ] RT-safety validation before registration
+- [ ] Module discovery from src/music_chronus/modules/
+
+#### 3.3 PatchRouter DAG (Day 3)
+- [ ] Directed Acyclic Graph for signal routing
+- [ ] Kahn's algorithm for topological sorting
+- [ ] Cycle detection prevents feedback loops
+- [ ] Pre-allocated edge buffers (32 connections max)
+
+#### 3.4 Integration & OSC (Day 4)
+- [ ] Integrate PatchRouter with ModuleHost
+- [ ] Standby slot patch rebuilding
+- [ ] Extended OSC: /patch/connect, /patch/commit
+- [ ] Process-based updates (no hot-reload in production)
+
+#### 3.5 Testing & Validation (Day 5)
+- [ ] Unit tests for registry, router, params
+- [ ] Integration test: build sine→filter patch
+- [ ] Live patch updates without glitches
+- [ ] 10-minute soak test with 50+ patch commits
+
+#### Key Decisions
+- **NO hot-reload in production** - Use slot-based rebuilding
+- **Lazy imports** - Only load modules when building patches  
+- **Pre-allocated buffers** - 16 modules, 32 edges maximum
+- **Development mode** - CHRONUS_DEV_RELOAD=1 for testing only
 
 ## Architecture Design
 
