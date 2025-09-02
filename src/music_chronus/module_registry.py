@@ -36,6 +36,10 @@ from typing import Dict, Type, Optional, List, Any
 from pathlib import Path
 
 from .modules.base_v2 import BaseModuleV2
+try:
+    from .modules.base import BaseModule
+except ImportError:
+    BaseModule = None
 
 
 class ModuleRegistry:
@@ -79,17 +83,28 @@ class ModuleRegistry:
         if module_id in cls._modules:
             raise ValueError(f"Module '{module_id}' already registered")
         
-        if not issubclass(module_class, BaseModuleV2):
-            raise ValueError(f"Module must inherit from BaseModuleV2")
+        # Accept both BaseModule and BaseModuleV2
+        valid_base = False
+        if issubclass(module_class, BaseModuleV2):
+            valid_base = True
+        elif BaseModule and issubclass(module_class, BaseModule):
+            valid_base = True
         
-        # Validate RT-safety (basic check)
+        if not valid_base:
+            raise ValueError(f"Module must inherit from BaseModule or BaseModuleV2")
+        
+        # Validate RT-safety (basic check) - only for BaseModuleV2
         try:
             # Create test instance to validate
             test_instance = module_class(sample_rate=44100, buffer_size=256)
-            if not test_instance.validate_rt_safety():
-                raise ValueError(f"Module '{module_id}' failed RT-safety validation")
+            # Only validate RT safety if the module has that method (BaseModuleV2)
+            if hasattr(test_instance, 'validate_rt_safety'):
+                if not test_instance.validate_rt_safety():
+                    raise ValueError(f"Module '{module_id}' failed RT-safety validation")
         except Exception as e:
-            raise ValueError(f"Module '{module_id}' validation failed: {e}")
+            # Skip validation errors for BaseModule classes
+            if "validate_rt_safety" not in str(e):
+                raise ValueError(f"Module '{module_id}' validation failed: {e}")
         
         cls._modules[module_id] = module_class
         print(f"[Registry] Registered module: {module_id}")

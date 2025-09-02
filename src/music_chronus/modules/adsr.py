@@ -8,8 +8,10 @@ ADSR - Linear envelope generator module (Phase 2)
 
 import numpy as np
 from .base import BaseModule
+from ..module_registry import register_module
 
 
+@register_module('adsr')
 class ADSR(BaseModule):
     """
     Linear ADSR envelope generator with sample-accurate timing.

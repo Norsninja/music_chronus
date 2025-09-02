@@ -403,10 +403,6 @@ class ModuleHost:
             if not module or not module.active:
                 continue
             
-            # Prepare module (boundary updates)
-            if hasattr(module, 'prepare'):
-                module.prepare()
-            
             # Get input connections
             input_modules = self.router.get_module_inputs(module_id)
             
@@ -429,15 +425,20 @@ class ModuleHost:
                 else:
                     self.mix_buffer.fill(0.0)
             
+            # Ensure work buffer exists for this module (lazy allocation)
+            out_buf = self.work_buffers.get(module_id)
+            if out_buf is None:
+                out_buf = self.work_buffers[module_id] = np.zeros(self.buffer_size, dtype=np.float32)
+            
             # Process module
-            module.process_buffer(self.mix_buffer, self.work_buffers[module_id])
+            module.process_buffer(self.mix_buffer, out_buf)
             
             # Copy output to edge buffers for downstream modules
             output_modules = self.router.get_module_outputs(module_id)
             for dest_id in output_modules:
                 edge_buffer = self.router.get_edge_buffer(module_id, dest_id)
                 if edge_buffer is not None:
-                    np.copyto(edge_buffer, self.work_buffers[module_id], casting='no')
+                    np.copyto(edge_buffer, out_buf, casting='no')
             
             last_module_id = module_id
         

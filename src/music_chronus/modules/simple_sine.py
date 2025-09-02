@@ -8,8 +8,10 @@ SimpleSine - Allocation-free sine oscillator module (Phase 2)
 
 import numpy as np
 from .base import BaseModule
+from ..module_registry import register_module
 
 
+@register_module('simple_sine')
 class SimpleSine(BaseModule):
     """
     Phase accumulator sine oscillator with zero allocations.

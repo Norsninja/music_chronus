@@ -8,8 +8,10 @@ BiquadFilter - Transposed Direct Form II filter module (Phase 2)
 
 import numpy as np
 from .base import BaseModule
+from ..module_registry import register_module
 
 
+@register_module('biquad_filter')
 class BiquadFilter(BaseModule):
     """
     Transposed Direct Form II (DF2T) biquad filter.
