@@ -14,10 +14,7 @@ from typing import Dict, Optional, Any
 from abc import ABC, abstractmethod
 
 # Import parameter specification system
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from param_spec import ParamSpec, ParamType, SmoothingMode
+from ..param_spec import ParamSpec, ParamType, SmoothingMode
 
 
 class BaseModuleV2(ABC):
