@@ -32,11 +32,11 @@ class SimpleSine(BaseModule):
         self.param_targets = self.params.copy()
 
         # Smoothing config (in samples)
-        # Keep gain click-free; no smoothing for freq by default (glide can be added later)
+        # Keep gain click-free; add freq smoothing to prevent pops on parameter changes
         self.smoothing_samples.update(
             {
                 "gain": int(0.005 * sample_rate),  # ~5ms
-                "freq": 0,
+                "freq": int(0.010 * sample_rate),  # 10ms - eliminates freq change pops
                 "default": int(0.005 * sample_rate),
             }
         )

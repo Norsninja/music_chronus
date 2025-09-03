@@ -121,9 +121,10 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
     # Refined scheduling - well-behaved producer
     buffer_period = BUFFER_SIZE / SAMPLE_RATE
     next_deadline = time.perf_counter() + buffer_period
-    max_catchup = 2  # Limit buffers per cycle
-    lead_target = 2  # Desired ring occupancy
-    early_margin = 0.002  # 2ms early to absorb jitter
+    # Environment-driven tuning knobs (Senior Dev Track A polish)
+    max_catchup = int(os.environ.get('CHRONUS_MAX_CATCHUP', '2'))  # Limit buffers per cycle
+    lead_target = int(os.environ.get('CHRONUS_LEAD_TARGET', '2'))  # Desired ring occupancy  
+    early_margin = float(os.environ.get('CHRONUS_EARLY_MARGIN_MS', '2')) / 1000.0  # Convert ms to seconds
     
     # Helper to check ring occupancy
     def ring_occupancy(ring):
@@ -302,6 +303,29 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
         produced_this_cycle = 0
         now = time.perf_counter()
         
+        # PROACTIVE EARLY-FILL: Emergency buffer when ring is empty
+        # If ring is at 0 and we haven't produced yet, generate ONE buffer immediately
+        # without advancing the deadline anchor - prevents ring starvation pops
+        occ = ring_occupancy(audio_ring)
+        if occ == 0 and produced_this_cycle == 0:
+            # Emergency fill - generate exactly one buffer NOW
+            if os.environ.get('CHRONUS_VERBOSE'):
+                print(f"[WORKER {slot_id}] EMERGENCY FILL: occ=0, producing one buffer immediately")
+            
+            output_buffer = module_host.process_chain()
+            
+            # Try to write to ring
+            if audio_ring.write(output_buffer):
+                produced_this_cycle += 1
+                n += 1
+                buffer_count += 1
+                
+                # Log emergency fill success if verbose
+                if os.environ.get('CHRONUS_VERBOSE'):
+                    rms = np.sqrt(np.mean(output_buffer ** 2))
+                    print(f"[WORKER {slot_id}] Emergency fill complete: RMS={rms:.4f}, new occ={ring_occupancy(audio_ring)}")
+            # Do NOT advance next_deadline for this emergency buffer
+        
         # Produce at most max_catchup buffers per cycle
         while produced_this_cycle < max_catchup:
             # Check ring occupancy - don't overfill
@@ -445,6 +469,11 @@ class AudioSupervisorV3:
         self.total_reads = 0
         self.failover_count = 0
         self.buffers_output = 0
+        
+        # Senior Dev's instrumentation (Track A polish)
+        self.occ_zero_count = 0    # Counter for occupancy==0 events
+        self.underflow_count = 0   # Counter for PortAudio underflows
+        self.overflow_count = 0    # Counter for PortAudio overflows
         
         # Monitoring
         self.monitor_thread = None
@@ -726,7 +755,14 @@ class AudioSupervisorV3:
     def audio_callback(self, outdata, frames, time_info, status):
         """Audio callback - zero-allocation pattern from v2"""
         if status:
-            print(f"[AUDIO] Status: {status}")
+            # Count specific PortAudio status flags (Senior Dev)
+            if status.input_underflow or status.output_underflow:
+                self.underflow_count += 1
+            if status.input_overflow or status.output_overflow:
+                self.overflow_count += 1
+            # Only print if verbose
+            if os.environ.get('CHRONUS_VERBOSE', '0') == '1':
+                print(f"[AUDIO] Status: {status}")
         
         # Handle pending switch at buffer boundary
         if self.pending_switch and self.standby_ready:
@@ -775,11 +811,23 @@ class AudioSupervisorV3:
         np.copyto(outdata[:, 0], self.last_good)
         self.total_reads += 1
         
-        # Log ring stats periodically (sparse)
+        # Log ring stats periodically with enhanced metrics (Senior Dev)
         if self.total_reads % 1000 == 0:
             stats = active_ring.get_stats()
+            occupancy = stats['occupancy']
+            
+            # Count occ==0 events
+            if occupancy == 0:
+                self.occ_zero_count += 1
+            
             none_pct = (self.none_reads / self.total_reads) * 100
-            print(f"[STATS] occ={stats['occupancy']}, seq={stats['last_seq']}, none={none_pct:.1f}%")
+            occ_zero_per_1k = self.occ_zero_count  # Reset counter each 1000
+            
+            # Enhanced stats output
+            print(f"[STATS] occ={occupancy}, seq={stats['last_seq']}, none={none_pct:.1f}%, occ0/1k={occ_zero_per_1k}, underflow={self.underflow_count}, overflow={self.overflow_count}")
+            
+            # Reset occ_zero counter for next 1000 callbacks
+            self.occ_zero_count = 0
     
     def run(self):
         """Main supervisor loop"""
