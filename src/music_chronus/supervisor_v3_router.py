@@ -457,6 +457,12 @@ class AudioSupervisorV3:
         
         # Router state (CP3)
         self.router_enabled = USE_ROUTER
+        
+        # Recording state
+        self.recording = False
+        self.record_buffer = []
+        self.record_filename = None
+        self.record_start_time = None
         self.pending_patch = {}  # Patch being built in standby
         self.patch_modules = {}  # Module instances for patch
         
@@ -675,6 +681,74 @@ class AudioSupervisorV3:
         self.patch_modules.clear()
         self.standby_ready = False
     
+    def start_recording(self, filename=None):
+        """Start recording audio to WAV file."""
+        if self.recording:
+            print("[RECORD] Already recording")
+            return
+        
+        # Generate filename if not provided
+        if not filename:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"recording_{timestamp}.wav"
+        
+        # Initialize recording
+        self.record_buffer = []
+        self.record_filename = filename
+        self.record_start_time = time.perf_counter()
+        self.recording = True
+        print(f"[RECORD] Started recording to {filename}")
+    
+    def stop_recording(self):
+        """Stop recording and save WAV file."""
+        if not self.recording:
+            print("[RECORD] Not recording")
+            return
+        
+        self.recording = False
+        
+        if self.record_buffer:
+            # Concatenate all buffers
+            audio_data = np.concatenate(self.record_buffer)
+            
+            # Convert float32 [-1,1] to int16 for WAV
+            audio_int = np.int16(np.clip(audio_data, -1.0, 1.0) * 32767)
+            
+            # Write WAV file
+            from scipy.io import wavfile
+            wavfile.write(self.record_filename, int(SAMPLE_RATE), audio_int)
+            
+            # Calculate duration and size
+            duration = len(audio_data) / SAMPLE_RATE
+            file_size = len(audio_data) * 2 / 1024 / 1024  # MB
+            
+            print(f"[RECORD] Saved {duration:.1f}s ({file_size:.1f}MB) to {self.record_filename}")
+            
+            # Clear buffer to free memory
+            self.record_buffer = []
+        else:
+            print("[RECORD] No audio recorded")
+    
+    def handle_record_start(self, unused_addr, *args):
+        """OSC handler for /record/start [filename]"""
+        filename = args[0] if args else None
+        self.start_recording(filename)
+    
+    def handle_record_stop(self, unused_addr):
+        """OSC handler for /record/stop"""
+        self.stop_recording()
+    
+    def handle_record_status(self, unused_addr):
+        """OSC handler for /record/status"""
+        if self.recording:
+            duration = time.perf_counter() - self.record_start_time
+            buffer_count = len(self.record_buffer)
+            memory_mb = buffer_count * BUFFER_SIZE * 4 / 1024 / 1024
+            print(f"[RECORD] Recording: {duration:.1f}s, {buffer_count} buffers, {memory_mb:.1f}MB")
+        else:
+            print("[RECORD] Not recording")
+    
     def start_osc_server(self):
         """Start OSC server with patch commands (CP3)"""
         disp = dispatcher.Dispatcher()
@@ -689,6 +763,11 @@ class AudioSupervisorV3:
             disp.map("/patch/connect", self.handle_patch_connect)
             disp.map("/patch/commit", self.handle_patch_commit)
             disp.map("/patch/abort", self.handle_patch_abort)
+        
+        # Recording commands
+        disp.map("/record/start", self.handle_record_start)
+        disp.map("/record/stop", self.handle_record_stop)
+        disp.map("/record/status", self.handle_record_status)
         
         # Use consistent environment variables
         osc_host = os.environ.get('CHRONUS_OSC_HOST', '127.0.0.1')
@@ -811,6 +890,10 @@ class AudioSupervisorV3:
         np.copyto(outdata[:, 0], self.last_good)
         self.total_reads += 1
         
+        # Capture buffer for recording if active
+        if self.recording:
+            self.record_buffer.append(self.last_good.copy())
+        
         # Log ring stats periodically with enhanced metrics (Senior Dev)
         if self.total_reads % 1000 == 0:
             stats = active_ring.get_stats()
@@ -875,6 +958,11 @@ class AudioSupervisorV3:
     
     def cleanup(self):
         """Clean shutdown"""
+        # Stop recording if active
+        if self.recording:
+            print("[RECORD] Stopping recording due to shutdown")
+            self.stop_recording()
+        
         self.shutdown.set()
         
         # Stop workers

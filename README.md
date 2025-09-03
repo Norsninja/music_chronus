@@ -1,11 +1,13 @@
 # Music Chronus
-## AI-Collaborative Command-Line Modular Synthesizer
+## Headless Modular Synthesizer Studio for Human-AI Music Creation
 
 > *"Yo! Chronus, drop in some kick and snare for a DnB song..."*
 
 A real-time modular synthesizer built for human-AI collaboration. Create music through conversation, build instruments on demand, and explore sounds that emerge from the space between human creativity and algorithmic precision.
 
-**Status**: Phase 2 Complete - Fault-Tolerant Modular Synthesis | **Performance**: 5.8ms latency, <50ms failover | **Architecture**: Slot-based with zero-allocation
+**This synthesizer contains no AI** - it's a headless instrument designed for CLI-based agentic AI (Claude Code, Gemini CLI, GPT's Codex) to use alongside humans. Both are equal musicians sharing the same tool.
+
+**Status**: Phase 3 Complete - Dynamic Routing & Recording | **Performance**: 5.8ms latency, <50ms failover | **First AI Composition**: [39-second musical piece](recordings/chronus_first_musical_session.wav) (Sept 3, 2025)
 
 ---
 
@@ -30,9 +32,14 @@ AI:  > load tb303_module
 
 This is **collaborative music creation** - not just using AI as a tool, but as a creative partner.
 
+## 🎵 Listen: First AI-Human Musical Collaboration
+**[recordings/chronus_first_musical_session.wav](recordings/chronus_first_musical_session.wav)** - September 3, 2025
+
+*Before diving into why and how, hear what we've created together: 39 seconds of an AI (Chronus Nexus) composing music by thinking through synthesis parameters - not ML generation, but reasoning about frequencies, envelopes, and signal flow.*
+
 ## Why This Exists
 
-Existing music software wasn't built for AI collaboration. They assume humans operating GUIs or learning complex syntax. We needed something that's:
+We tried TidalCycles (which is excellent) but needed something more direct for AI operation. Existing music software wasn't built for AI collaboration - they assume humans operating GUIs or learning complex syntax. We needed something that's:
 
 - **Headless by design** - Works without displays or interactive modes
 - **Command-driven** - Natural for AI agents to operate  
@@ -40,25 +47,11 @@ Existing music software wasn't built for AI collaboration. They assume humans op
 - **Real-time** - No waiting for compilation or rendering
 - **Collaborative** - Built for human-AI partnership
 
-## What We've Proven (Technical Validation)
+## What We've Proven
 
-Through rigorous testing, we've validated that a Python-based real-time synthesizer is not only possible, but **competitive with professional DAWs**:
+We've built a real-time synthesizer in Python that works. It's fast enough for live performance (5.8ms latency), stable enough for recording (zero dropouts), and flexible enough for AI to operate alongside humans.
 
-| Component | Target | Achieved | Status |
-|-----------|--------|----------|--------|
-| **Total Latency** | <20ms | **5.8ms** | ✅ Professional grade |
-| **Audio Stability** | 0 dropouts | **Perfect** | ✅ 60+ second stress tests |
-| **Control Response** | <5ms | **0.068ms** | ✅ Instant parameter changes |
-| **Module Loading** | <100ms | **0.02ms** | ✅ Hot-swappable modules |
-| **Throughput** | 1000 msg/sec | **1000+** | ✅ Handles rapid automation |
-| **Failover Time** | <100ms | **<50ms** | ✅ Near-seamless recovery |
-
-### Key Technical Discoveries
-
-1. **Worker Pool Architecture Required** - On-demand process spawning takes 672ms (impossible for real-time), worker pools achieve 0.02ms
-2. **Multiprocessing Beats Threading** - 5.7x faster for small audio buffers despite Python GIL
-3. **Memory Bandwidth Limits Parallelism** - 2-3 concurrent workers max, regardless of CPU cores
-4. **Zero-Copy Audio Transfer** - Shared memory achieves 0.042ms overhead between modules
+**[See detailed technical metrics →](docs/TECHNICAL.md)**
 
 ## Current Architecture
 
@@ -86,28 +79,18 @@ Human Commands → CLI Process → OSC Messages (0.068ms) → Worker Pool
 
 My music preferences are raw, authentic, aggressive sounding music - even classical has to be "driving." My DJing evolved from house music to techno to DnB. DnB is the most fun, along with hard, dark, organic sounding house/techno.
 
-This isn't trying to copy Ableton or Studio One. It's creating a new category: **collaborative musical instruments** where human creativity directs AI implementation in real-time.
+### AI Collaboration: Look Mum, We Use a Computer...
+On September 3, 2025, Chronus Nexus (AI) and I created our first musical piece together. Not through ML models or pattern matching, but through the AI reasoning about synthesis parameters and musical structure. The AI operates the synthesizer just like I do - through commands and parameter control.
+
+This isn't trying to copy Ableton or Studio One. It's creating a new category: **collaborative musical instruments** where human creativity and AI reasoning merge in real-time.
 
 ## Current Status
 
-**Phase 0: Foundation Testing** - ✅ COMPLETE (12/16 tests, 4 MUS tests deferred)
-- ✅ Audio performance validated (5.8ms latency, zero dropouts)
-- ✅ Control systems proven (sub-millisecond response)  
-- ✅ Architecture decided (multiprocessing + worker pools)
-- ✅ Process management working (crash isolation, clean shutdown)
+The synthesizer is **ready for music creation**. We've proven it works, recorded our first session, and validated the architecture. The aspirational vision of "drop a dirty bass" is getting closer with each session.
 
-**Phase 1: Core Audio Engine** - ✅ COMPLETE 
-- ✅ **Working audio engine** - 60+ seconds continuous playback, zero underruns
-- ✅ **Phase accumulator synthesis** - Clean 440Hz sine wave generation
-- ✅ **Performance metrics** - 0.023ms mean callback, 6% CPU usage
-- ✅ **Lock-free architecture** - Real-time safe audio generation
-- ✅ **OSC control integration** - Live parameter changes with zero underruns
+**Latest Achievement**: First AI-composed music through synthesis reasoning (not ML generation)
 
-**Phase 2: Modular Synthesis** - ✅ COMPLETE
-- ✅ **Fault-tolerant architecture** - <50ms failover with slot-based design
-- ✅ **Module chain working** - SimpleSine → ADSR → BiquadFilter
-- ✅ **Zero-allocation audio path** - Per-process view rebinding pattern
-- ✅ **Command continuity** - Full control before, during, and after failover
+**[Full development history →](docs/TECHNICAL.md#development-phases)**
 
 ## Development Approach
 
@@ -221,23 +204,25 @@ python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient
 ### Working OSC Commands
 
 ```python
-# Current synthesizer chain: SimpleSine → ADSR → BiquadFilter
+# Recording (NEW - Capture your sessions!)
+/record/start [filename]    # Start recording to WAV
+/record/stop               # Stop and save recording
+/record/status            # Show recording state
 
-# Test commands
-/test                       # Play test tone (440Hz)
+# Dynamic Patching (Router Mode)
+/patch/create <id> <type>           # Create module instance
+/patch/connect <source> <dest>      # Connect modules
+/patch/commit                       # Activate patch with <50ms switch
+/patch/abort                        # Cancel patch building
 
-# Module parameters
-/mod/sine/freq <hz>        # Oscillator frequency (20-20000)
-/mod/sine/gain <0-1>       # Oscillator gain
-/mod/filter/cutoff <hz>    # Filter cutoff frequency
-/mod/filter/resonance <q>  # Filter Q factor
+# Module Control
+/mod/<module>/<param> <value>      # Set any module parameter
+/gate/<module> <0|1>               # Gate control for envelopes
 
-# ADSR envelope
-/gate/adsr <0|1>           # Gate on/off
-/mod/adsr/attack <ms>      # Attack time
-/mod/adsr/decay <ms>       # Decay time  
-/mod/adsr/sustain <0-1>    # Sustain level
-/mod/adsr/release <ms>     # Release time
+# Examples
+/mod/sine/freq 440.0              # Oscillator frequency
+/mod/filter/cutoff 2000.0         # Filter cutoff
+/mod/adsr/attack 10.0             # ADSR attack time (ms)
 ```
 
 ### Environment Variables
@@ -250,21 +235,28 @@ export CHRONUS_VERBOSE=1
 export PULSE_SERVER=/mnt/wslg/PulseServer
 ```
 
-## Fault Tolerance
+## Recording Sessions
 
-The synthesizer implements a dual-slot architecture for seamless failover:
+Capture your musical collaborations to WAV files:
 
-- **Slot 0 (Primary)**: Active audio processing worker
-- **Slot 1 (Standby)**: Hot standby ready to take over
-- **Failover Time**: <50ms audio interruption on worker crash
-- **Command Continuity**: Full control maintained during failover
-- **Zero Allocation**: Audio callback uses pre-allocated buffers only
+```bash
+# Start recording with auto-generated filename
+/record/start                    # Creates recording_YYYYMMDD_HHMMSS.wav
 
-When a worker crashes, the system automatically:
-1. Detects failure via heartbeat timeout
-2. Switches audio callback to standby slot
-3. Spawns replacement worker in failed slot
-4. Maintains all parameter states
+# Start with custom filename
+/record/start my_session.wav    # Creates recordings/my_session.wav
+
+# Stop and save
+/record/stop                    # Saves file and reports duration
+```
+
+**Why Record?** 
+- Bypass WSL2 playback artifacts (recordings are clean!)
+- Document human-AI musical collaboration
+- Share your creations
+- Analyze synthesis quality
+
+**[Technical details →](docs/TECHNICAL.md#recording-technical-details)**
 
 ## Troubleshooting
 
@@ -306,10 +298,10 @@ This project is in active development. We welcome:
 
 ## Documentation
 
-- [Project Vision](docs/PROJECT_VISION.md) - Detailed motivation and goals
-- [Technical Review](docs/COMPREHENSIVE_TEST_REVIEW.md) - Complete testing results
-- [Architecture Decisions](docs/architecture_decision_worker_pools.md) - Key technical choices
-- [Performance Benchmarks](tests/results/) - Detailed test results
+- [Technical Details](docs/TECHNICAL.md) - Performance metrics, architecture, WSL2 notes
+- [Recording Implementation](docs/recording_feature_implementation_plan.md) - How recording works
+- [WSL2 Audio Caveats](docs/wsl2_audio_caveats.md) - Known issues and workarounds
+- [First Session Analysis](recordings/README.md) - About the historic first AI composition
 - [Current Sprint](sprint.md) - Development progress and next steps
 
 ## License

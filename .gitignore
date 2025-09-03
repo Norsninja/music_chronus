@@ -22,6 +22,8 @@ Thumbs.db
 # Project specific
 *.log
 *.wav
+# But keep recordings for documentation
+!recordings/*.wav
 *.mp3
 .coverage
 htmlcov/
