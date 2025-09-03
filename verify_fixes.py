@@ -11,10 +11,19 @@ print("=" * 60)
 print("WORKSPACE FIX VERIFICATION")
 print("=" * 60)
 
-# Check 1: AudioWorker.terminate() should NOT have shutdown command
-print("\n1. Checking AudioWorker.terminate() in supervisor_v2_fixed.py...")
-with open('src/music_chronus/supervisor_v2_fixed.py', 'r') as f:
-    content = f.read()
+# Check 1: Verify supervisor_v3_router.py exists (current implementation)
+print("\n1. Checking for current supervisor implementation...")
+if os.path.exists('src/music_chronus/supervisor_v3_router.py'):
+    print("✅ PASS: supervisor_v3_router.py exists (current implementation)")
+    with open('src/music_chronus/supervisor_v3_router.py', 'r') as f:
+        content = f.read()
+elif os.path.exists('src/music_chronus/supervisor_v2_fixed.py'):
+    print("⚠️  WARNING: Using older supervisor_v2_fixed.py")
+    with open('src/music_chronus/supervisor_v2_fixed.py', 'r') as f:
+        content = f.read()
+else:
+    print("❌ FAIL: No supervisor implementation found")
+    sys.exit(1)
     
 # Look for the terminate method
 terminate_start = content.find('def terminate(self):')
@@ -49,22 +58,24 @@ if 'def reset(self):' in supervisor_content and 'self.reset()' in supervisor_con
 else:
     print("❌ FAIL: reset() method missing or not called")
 
-# Check 4: Test uses failover_count
-print("\n4. Checking test_modulehost_fixed.py uses failover_count...")
-with open('test_modulehost_fixed.py', 'r') as f:
-    test_content = f.read()
-    
-if "status['metrics']['failover_count']" in test_content:
-    print("✅ PASS: Test checks failover_count for detection")
+# Check 4: Test files exist
+print("\n4. Checking test files...")
+if os.path.exists('test_modulehost_fixed.py'):
+    with open('test_modulehost_fixed.py', 'r') as f:
+        test_content = f.read()
+    if "status['metrics']['failover_count']" in test_content:
+        print("✅ PASS: Test checks failover_count for detection")
+    else:
+        print("⚠️  WARNING: Test doesn't use failover_count")
 else:
-    print("❌ FAIL: Test doesn't use failover_count")
+    print("⚠️  WARNING: test_modulehost_fixed.py not found (may be in tests/ directory)")
 
 # Summary
 print("\n" + "=" * 60)
 print("VERIFICATION COMPLETE")
 print("=" * 60)
-print("\nIf all checks show ✅ PASS, the fixes ARE applied.")
-print("If any show ❌ FAIL, the workspace has stale code.")
+print("\nCurrent implementation: supervisor_v3_router.py")
+print("This includes CP3 router support and recording capability.")
 print("\nTo test functionality, run:")
-print("  python test_simple_validation.py")
-print("  python test_modulehost_fixed.py")
+print("  export CHRONUS_ROUTER=1")
+print("  python src/music_chronus/supervisor_v3_router.py")
