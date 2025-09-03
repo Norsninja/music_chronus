@@ -34,10 +34,10 @@ from .modules.adsr import ADSR
 from .modules.biquad_filter import BiquadFilter
 
 # Audio configuration
-SAMPLE_RATE = 44100
-BUFFER_SIZE = 256
+SAMPLE_RATE = int(os.environ.get('CHRONUS_SAMPLE_RATE', '44100'))
+BUFFER_SIZE = int(os.environ.get('CHRONUS_BUFFER_SIZE', '512'))  # Track A: 512 for stability
 NUM_CHANNELS = 1
-NUM_BUFFERS = 8  # Senior Dev's recommendation
+NUM_BUFFERS = int(os.environ.get('CHRONUS_NUM_BUFFERS', '16'))  # Track A: 16 for cushion
 
 # Ring buffer configuration
 COMMAND_RING_SLOTS = 32
@@ -64,6 +64,10 @@ class AudioRing:
         
         # Pre-allocate numpy array in shared memory
         self.data = mp.Array('f', num_buffers * BUFFER_SIZE, lock=False)
+        
+        # Sequence numbers for integrity tracking
+        self.seq = mp.Array('Q', num_buffers, lock=False)  # Unsigned 64-bit
+        self._seq_counter = 0  # Local sequence counter
         
         # SENIOR DEV'S FIX: Track PID and defer view creation
         self._pid = os.getpid()
@@ -103,7 +107,11 @@ class AudioRing:
         idx = self.head.value
         np.copyto(self._buffers[idx], audio_data[:BUFFER_SIZE])
         
-        # Update head
+        # Increment and store sequence number
+        self._seq_counter += 1
+        self.seq[idx] = self._seq_counter
+        
+        # Update head (publication)
         self.head.value = next_head
         return True
     
@@ -129,10 +137,55 @@ class AudioRing:
         # Return view of buffer (caller must copy immediately)
         return self._buffers[idx]
     
+    def read_latest_keep(self, keep_after_read=1):
+        """
+        Latest-wins with cushion: Skip stale buffers but maintain buffering
+        Returns view for zero allocation, but caller must copy immediately
+        """
+        # Ensure views are valid for this process
+        self._ensure_views()
+        
+        head = self.head.value
+        tail = self.tail.value
+        
+        # Check if empty
+        if head == tail:
+            return None
+        
+        N = self.num_buffers
+        occ = (head - tail + N) % N
+        
+        # Choose how many to keep in ring after consuming one
+        keep_after_read = max(0, min(keep_after_read, N - 1))
+        
+        # Determine how many to consider (we will keep keep_after_read after consuming one)
+        keep_desired = min(occ, keep_after_read + 1)
+        
+        # Select buffer index to consume (near-latest)
+        idx = (head - keep_desired + N) % N
+        
+        # Advance tail to just after idx, consuming exactly one buffer
+        self.tail.value = (idx + 1) % N
+        
+        return self._buffers[idx]
+    
+    def get_stats(self):
+        """Get ring stats for debugging (non-callback)"""
+        head = self.head.value
+        tail = self.tail.value
+        occ = (head - tail + self.num_buffers) % self.num_buffers
+        
+        # Get last published sequence number
+        last_idx = (head - 1 + self.num_buffers) % self.num_buffers if head != tail else 0
+        last_seq = self.seq[last_idx] if head != tail else 0
+        
+        return {'occupancy': occ, 'last_seq': last_seq, 'head': head, 'tail': tail}
+    
     def reset(self):
         """Reset to empty state"""
         self.head.value = 0
         self.tail.value = 0
+        self._seq_counter = 0
 
 
 def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, shutdown_flag):

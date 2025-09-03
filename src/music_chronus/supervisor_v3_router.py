@@ -253,6 +253,7 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                             # Now signal ready
                             if prime_ready:
                                 prime_ready.value = 1  # Signal supervisor
+                                print(f"[WORKER {slot_id}] prime_ready set")
                             patch_ready = True
                         else:
                             print(f"[WORKER {slot_id}] WARNING: Warmup silent, max RMS={max_rms:.6f}")
@@ -417,7 +418,8 @@ class AudioSupervisorV3:
         self.worker_shutdown_flags = [mp.Event(), mp.Event()]
         
         # Patch communication (CP3) - for standby slot only
-        self.patch_queue = mp.Queue(maxsize=100) if USE_ROUTER else None
+        # Per-worker patch queues to avoid race conditions (Senior Dev fix)
+        self.patch_queues = [mp.Queue(maxsize=100), mp.Queue(maxsize=100)] if USE_ROUTER else [None, None]
         
         # Prime readiness flags (one per worker)
         self.prime_ready = [mp.Value('i', 0), mp.Value('i', 0)]
@@ -475,7 +477,8 @@ class AudioSupervisorV3:
         
         # Router enabled only for standby role
         use_router = self.router_enabled and is_standby
-        patch_queue = self.patch_queue if is_standby else None
+        # Pass the specific queue for this slot (only standby gets it)
+        patch_queue = self.patch_queues[slot_idx] if (USE_ROUTER and is_standby) else None
         
         self.workers[slot_idx] = self.ctx.Process(
             target=worker_process,
@@ -515,8 +518,11 @@ class AudioSupervisorV3:
         }
         
         # Send to standby worker via patch queue
-        if self.patch_queue:
-            self.patch_queue.put({
+        if USE_ROUTER:
+            # Route to standby worker only
+            standby_idx = 1 - self.active_idx.value
+            print(f"[OSC] Routing patch create to standby slot {standby_idx}")
+            self.patch_queues[standby_idx].put({
                 'type': 'create',
                 'module_id': module_id,
                 'module_type': module_type
@@ -534,8 +540,11 @@ class AudioSupervisorV3:
             self.pending_patch[source_id]['connections'].append(dest_id)
         
         # Send to standby worker via patch queue
-        if self.patch_queue:
-            self.patch_queue.put({
+        if USE_ROUTER:
+            # Route to standby worker only
+            standby_idx = 1 - self.active_idx.value
+            print(f"[OSC] Routing patch connect to standby slot {standby_idx}")
+            self.patch_queues[standby_idx].put({
                 'type': 'connect',
                 'source_id': source_id,
                 'dest_id': dest_id
@@ -552,8 +561,11 @@ class AudioSupervisorV3:
         print(f"[OSC] /patch/commit - Building patch with {len(modules_to_prime)} modules")
         
         # Send commit to standby worker
-        if self.patch_queue:
-            self.patch_queue.put({'type': 'commit'})
+        if USE_ROUTER:
+            # Route to standby worker only
+            standby_idx = 1 - self.active_idx.value
+            print(f"[OSC] Routing patch commit to standby slot {standby_idx}")
+            self.patch_queues[standby_idx].put({'type': 'commit'})
             
             # Wait briefly for DAG build
             time.sleep(0.02)  # 20ms for patch build
@@ -584,7 +596,8 @@ class AudioSupervisorV3:
             
             # Send prime command to standby
             print(f"[OSC] Sending {len(prime_ops)} prime ops to standby worker")
-            self.patch_queue.put({
+            # Route prime operations to standby worker only
+            self.patch_queues[standby_idx].put({
                 'type': 'prime',
                 'ops': prime_ops,
                 'warmup': 8
@@ -592,6 +605,9 @@ class AudioSupervisorV3:
             
             # Wait for prime completion with timeout
             standby_idx = 1 - self.active_idx.value
+            print(f"[OSC] Waiting for standby slot {standby_idx} to prime (active={self.active_idx.value})")
+            if os.environ.get('CHRONUS_VERBOSE', '0') == '1':
+                print(f"[OSC] Prime flags: slot0={self.prime_ready[0].value}, slot1={self.prime_ready[1].value}")
             start_time = time.perf_counter()
             timeout = 0.5  # 500ms timeout
             
@@ -620,8 +636,11 @@ class AudioSupervisorV3:
         print("[OSC] /patch/abort - Clearing pending patch")
         
         # Send abort to standby worker
-        if self.patch_queue:
-            self.patch_queue.put({'type': 'abort'})
+        if USE_ROUTER:
+            # Route to standby worker only
+            standby_idx = 1 - self.active_idx.value
+            print(f"[OSC] Routing patch abort to standby slot {standby_idx}")
+            self.patch_queues[standby_idx].put({'type': 'abort'})
         
         self.pending_patch.clear()
         self.patch_modules.clear()

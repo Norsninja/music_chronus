@@ -50,8 +50,8 @@ class SimpleSine(BaseModule):
         # Note: We write phases and samples directly into out_buf to avoid temp arrays.
         self._phase_index = np.arange(buffer_size, dtype=np.float32)
 
-        # Wrap threshold: wrap every ~1000 cycles to keep numbers bounded
-        self._wrap_threshold = 1000.0 * self._two_pi
+        # Wrap threshold: wrap every 2π to keep precision
+        self._wrap_threshold = self._two_pi
 
     def prepare(self) -> None:
         """Reset oscillator state before playback."""
@@ -103,6 +103,6 @@ class SimpleSine(BaseModule):
         # Advance phase by one buffer
         self._phase += phase_inc * self.buffer_size
 
-        # Wrap occasionally to avoid drift
+        # Wrap to keep precision
         if self._phase > self._wrap_threshold:
             self._phase = self._phase % self._two_pi
