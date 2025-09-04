@@ -48,13 +48,15 @@ except ImportError:
     from music_chronus.module_registry import get_registry
     from music_chronus.modules.simple_sine import SimpleSine
     from music_chronus.modules.adsr import ADSR
+    # TEMPORARILY COMMENTED: Isolating sequencer import
+    # from music_chronus.sequencer import SequencerManager
     from music_chronus.modules.biquad_filter import BiquadFilter
 
 # Check for router mode
 USE_ROUTER = os.environ.get('CHRONUS_ROUTER', '0') == '1'
 
 
-def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, shutdown_flag, use_router=False, patch_queue=None, prime_ready=None):
+def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, shutdown_flag, is_standby=False, patch_queue=None, prime_ready=None):
     """Worker process with optional router support (CP3)
     
     Args:
@@ -66,7 +68,9 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
     import gc
     gc.disable()
     
-    print(f"[WORKER] Slot {slot_id} starting, PID={os.getpid()}, router={use_router}, GC disabled")
+    # Determine if this worker should use router based on system mode and role
+    use_router = USE_ROUTER and is_standby
+    print(f"[WORKER] Slot {slot_id} starting, PID={os.getpid()}, standby={is_standby}, router={use_router}, GC disabled")
     
     # Set up signal handling
     def handle_sigterm(signum, frame):
@@ -76,43 +80,79 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
     signal.signal(signal.SIGTERM, handle_sigterm)
     
     # Initialize module host with router support based on passed parameter
-    # use_router parameter now indicates if this worker is standby
+    # Initialize module host
     module_host = ModuleHost(SAMPLE_RATE, BUFFER_SIZE, use_router=use_router)
     
-    if use_router:
-        # Create and enable router for standby slot
-        router = PatchRouter(BUFFER_SIZE)
-        module_host.enable_router(router)
-        print(f"[WORKER] Slot {slot_id} router enabled")
-        
-        # Get module registry for dynamic instantiation
-        registry = get_registry()
-        
-        # Track patch state
-        patch_modules = {}  # module_id -> module instance
-        patch_ready = False
-        
-        # Access the registered modules directly
-        registered_modules = registry._modules
+    # Determine what to initialize based on system mode and worker role
+    if USE_ROUTER:
+        # System is in router mode
+        if is_standby:
+            # Standby slot: Create and enable router for building patches
+            router = PatchRouter(BUFFER_SIZE)
+            module_host.enable_router(router)
+            print(f"[WORKER] Slot {slot_id} router enabled (standby)")
+            
+            # Get module registry for dynamic instantiation
+            registry = get_registry()
+            
+            # Track patch state
+            patch_modules = {}  # module_id -> module instance
+            patch_ready = False
+            
+            # Access the registered modules directly
+            registered_modules = registry._modules
+        else:
+            # Active slot in router mode: Start empty, wait for committed patches
+            print(f"[WORKER] Slot {slot_id} starting empty (active, router mode)")
+            router = None
+            patch_modules = {}
+            patch_ready = False
+            registered_modules = {}
     else:
-        # Traditional linear chain (active slot or router disabled)
-        sine_module = SimpleSine(SAMPLE_RATE, BUFFER_SIZE)
-        adsr_module = ADSR(SAMPLE_RATE, BUFFER_SIZE)
-        filter_module = BiquadFilter(SAMPLE_RATE, BUFFER_SIZE)
-        
-        module_host.add_module("sine1", sine_module)
-        module_host.add_module("adsr1", adsr_module)
-        module_host.add_module("filter1", filter_module)
-        
-        # Configure default patch (using correct parameter names)
-        sine_module.set_param("freq", 440.0, immediate=True)  # Fixed: freq not frequency
-        sine_module.set_param("gain", 0.25, immediate=True)
-        adsr_module.set_param("attack", 10.0, immediate=True)
-        adsr_module.set_param("decay", 100.0, immediate=True)
-        adsr_module.set_param("sustain", 0.7, immediate=True)
-        adsr_module.set_param("release", 100.0, immediate=True)
-        filter_module.set_param("cutoff", 2000.0, immediate=True)  # Fixed: cutoff not frequency
-        filter_module.set_param("q", 1.0, immediate=True)
+        # Traditional mode (non-router)
+        if not is_standby:
+            # Active slot: Build default chain
+            print(f"[WORKER] Slot {slot_id} building default chain (active, traditional mode)")
+            sine_module = SimpleSine(SAMPLE_RATE, BUFFER_SIZE)
+            adsr_module = ADSR(SAMPLE_RATE, BUFFER_SIZE)
+            filter_module = BiquadFilter(SAMPLE_RATE, BUFFER_SIZE)
+            
+            module_host.add_module("sine1", sine_module)
+            module_host.add_module("adsr1", adsr_module)
+            module_host.add_module("filter1", filter_module)
+            
+            # Configure default patch (using correct parameter names)
+            sine_module.set_param("freq", 440.0, immediate=True)  # Fixed: freq not frequency
+            sine_module.set_param("gain", 0.25, immediate=True)
+            adsr_module.set_param("attack", 10.0, immediate=True)
+            adsr_module.set_param("decay", 100.0, immediate=True)
+            adsr_module.set_param("sustain", 0.7, immediate=True)
+            adsr_module.set_param("release", 100.0, immediate=True)
+            adsr_module.set_gate(True)  # FIXED: Use correct method to trigger gate
+            filter_module.set_param("cutoff", 2000.0, immediate=True)  # Fixed: cutoff not frequency
+            filter_module.set_param("q", 1.0, immediate=True)
+        else:
+            # Standby slot in traditional mode: Empty
+            print(f"[WORKER] Slot {slot_id} starting empty (standby, traditional mode)")
+            router = None
+            patch_modules = {}
+            patch_ready = False
+            registered_modules = {}
+    
+    # Initial prefill to prevent emergency fills at startup
+    # Fill the ring with 2-3 buffers before starting main loop
+    prefill_count = int(os.environ.get('CHRONUS_PREFILL_BUFFERS', '3'))
+    for i in range(prefill_count):
+        output_buffer = module_host.process_chain()
+        if audio_ring.write(output_buffer):
+            if os.environ.get('CHRONUS_VERBOSE'):
+                rms = np.sqrt(np.mean(output_buffer ** 2))
+                print(f"[WORKER {slot_id}] Prefill {i+1}: RMS={rms:.4f}")
+                # Warn if producing silence
+                if rms < 0.001:
+                    print(f"[WARNING] Worker {slot_id} prefill producing silence (RMS={rms:.4f})")
+        else:
+            break  # Ring full
     
     # Worker main loop
     buffer_count = 0
@@ -137,13 +177,14 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
     n = 0  # Total buffers produced
     late_cycles = 0  # Times we needed catch-up
     writes_dropped = 0  # Times ring was full
+    emergency_count = 0  # Total emergency fills
     last_stats_time = time.perf_counter()
     last_stats_n = 0  # Last n value we printed stats for
     stats_interval = 500  # Report every N buffers
     
     while not shutdown_flag.is_set():
         # Process patch commands if in standby with router
-        if use_router and patch_queue:
+        if USE_ROUTER and is_standby and patch_queue:
             if not patch_queue.empty():
                 print(f"[WORKER] Processing patch queue...")
                 try:
@@ -181,7 +222,7 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                         
                     elif cmd_type == 'commit':
                         # Validate and finalize patch
-                        if use_router and router:
+                        if USE_ROUTER and is_standby and 'router' in locals() and router:
                             try:
                                 # Get execution order (validates DAG)
                                 execution_order = router.get_processing_order()
@@ -263,7 +304,7 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                     elif cmd_type == 'abort':
                         # Clear patch state
                         patch_modules.clear()
-                        if use_router and router:
+                        if USE_ROUTER and is_standby and 'router' in locals() and router:
                             router.clear()
                         # Remove all modules from host
                         for mid in list(module_host.modules.keys()):
@@ -302,6 +343,7 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
         # Rate-limited production (well-behaved producer)
         produced_this_cycle = 0
         now = time.perf_counter()
+        emergency_filled = False  # Flag to allow catch-up after emergency fill
         
         # PROACTIVE EARLY-FILL: Emergency buffer when ring is empty
         # If ring is at 0 and we haven't produced yet, generate ONE buffer immediately
@@ -309,6 +351,7 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
         occ = ring_occupancy(audio_ring)
         if occ == 0 and produced_this_cycle == 0:
             # Emergency fill - generate exactly one buffer NOW
+            emergency_count += 1
             if os.environ.get('CHRONUS_VERBOSE'):
                 print(f"[WORKER {slot_id}] EMERGENCY FILL: occ=0, producing one buffer immediately")
             
@@ -320,11 +363,19 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
                 n += 1
                 buffer_count += 1
                 
+                # CRITICAL FIX: Advance deadline as on-time production
+                next_deadline = max(next_deadline, now) + buffer_period
+                
                 # Log emergency fill success if verbose
                 if os.environ.get('CHRONUS_VERBOSE'):
                     rms = np.sqrt(np.mean(output_buffer ** 2))
                     print(f"[WORKER {slot_id}] Emergency fill complete: RMS={rms:.4f}, new occ={ring_occupancy(audio_ring)}")
-            # Do NOT advance next_deadline for this emergency buffer
+                
+                # Recompute now for next iteration
+                now = time.perf_counter()
+                # Set flag to allow immediate catch-up in main loop
+                emergency_filled = True
+            # Continue to main loop to produce more buffers if needed
         
         # Produce at most max_catchup buffers per cycle
         while produced_this_cycle < max_catchup:
@@ -333,8 +384,18 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
             if occ >= min(audio_ring.num_buffers - 1, lead_target):
                 break  # Ring has enough buffers
             
-            # Check if we're at deadline
-            if now < next_deadline - early_margin:
+            # Check if we're at deadline (with catch-up override after emergency)
+            time_gate = now < next_deadline - early_margin
+            
+            # Rebuild mode: allow immediate production until we reach target or hit max_catchup
+            allow_immediate = emergency_filled and occ < lead_target and produced_this_cycle < max_catchup
+            
+            if allow_immediate:
+                if os.environ.get('CHRONUS_VERBOSE'):
+                    print(f"[WORKER {slot_id}] Catch-up override: occ={occ}, target={lead_target}, allowing immediate production")
+                time_gate = False  # Override time gate for catch-up
+            
+            if time_gate:
                 break  # Not time yet
             
             # Generate audio
@@ -343,7 +404,11 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
             # Try to write to ring
             if not audio_ring.write(output_buffer):
                 writes_dropped += 1
+                if os.environ.get('CHRONUS_VERBOSE'):
+                    print(f"[WORKER {slot_id}] DEBUG: Write failed after override! Ring full? occ={ring_occupancy(audio_ring)}")
                 break  # Ring full
+            elif allow_immediate and os.environ.get('CHRONUS_VERBOSE'):
+                print(f"[WORKER {slot_id}] DEBUG: Catch-up buffer written successfully, new occ={ring_occupancy(audio_ring)}")
             
             # Update counters
             produced_this_cycle += 1
@@ -368,6 +433,14 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
             
             # Update time for next iteration
             now = time.perf_counter()
+            
+            # Clear emergency flag once we've reached target or can't produce more
+            if emergency_filled:
+                new_occ = ring_occupancy(audio_ring)
+                if new_occ >= lead_target or produced_this_cycle >= max_catchup:
+                    emergency_filled = False
+                    if os.environ.get('CHRONUS_VERBOSE'):
+                        print(f"[WORKER {slot_id}] Rebuild complete: occ={new_occ}, produced={produced_this_cycle}")
         
         # Drift/respawn recovery - soft re-anchor if way behind
         if next_deadline < now - 0.05:  # More than 50ms behind
@@ -377,7 +450,11 @@ def worker_process(slot_id, audio_ring, command_ring, heartbeat_array, event, sh
         if os.environ.get('CHRONUS_VERBOSE') and n >= last_stats_n + stats_interval:
             period_us = int((now - last_stats_time) / stats_interval * 1e6)
             occ = ring_occupancy(audio_ring)
-            print(f"[WORKER {slot_id}] occ={occ}, prod={n}, late={late_cycles}, drop={writes_dropped}, period_us≈{period_us}")
+            emergency_per_1k = emergency_count * 1000 // max(1, n)
+            print(f"[WORKER {slot_id}] occ={occ}, prod={n}, late={late_cycles}, drop={writes_dropped}, "
+                  f"emergency={emergency_count} ({emergency_per_1k}/1k), period_us≈{period_us}")
+            print(f"[WORKER {slot_id}] Config: lead_target={lead_target}, max_catchup={max_catchup}, "
+                  f"early_margin_ms={early_margin*1000:.1f}, buffer_period_ms={buffer_period*1000:.2f}")
             last_stats_time = now
             last_stats_n = n
             
@@ -486,6 +563,15 @@ class AudioSupervisorV3:
         self.pending_switch = False
         self.target_idx = None  # For buffer-boundary switching
         
+        # Initialize sequencer manager
+        # TEMPORARILY COMMENTED: Isolating sequencer
+        # self.sequencer_manager = SequencerManager(
+        #     self.slot0_command_ring, 
+        #     self.slot1_command_ring,
+        #     sample_rate=SAMPLE_RATE,
+        #     buffer_size=BUFFER_SIZE
+        # )
+        
         # Initialize with slot 0 as active
         self.spawn_slot0_worker()
         self.spawn_slot1_worker()
@@ -510,16 +596,17 @@ class AudioSupervisorV3:
         audio_ring = self.slot0_audio_ring if slot_idx == 0 else self.slot1_audio_ring
         command_ring = self.slot0_command_ring if slot_idx == 0 else self.slot1_command_ring
         
-        # Router enabled only for standby role
-        use_router = self.router_enabled and is_standby
-        # Pass the specific queue for this slot (only standby gets it)
+        # Pass is_standby to worker to determine its role
+        # use_router is True only when both system is in router mode AND worker is standby
+        use_router = USE_ROUTER and is_standby
+        # Pass the specific queue for this slot (only standby gets it in router mode)
         patch_queue = self.patch_queues[slot_idx] if (USE_ROUTER and is_standby) else None
         
         self.workers[slot_idx] = self.ctx.Process(
             target=worker_process,
             args=(slot_idx, audio_ring, command_ring,
                   self.heartbeat_array, self.worker_events[slot_idx],
-                  self.worker_shutdown_flags[slot_idx], use_router, patch_queue,
+                  self.worker_shutdown_flags[slot_idx], is_standby, patch_queue,
                   self.prime_ready[slot_idx])  # Pass prime_ready to worker
         )
         self.workers[slot_idx].start()
@@ -749,6 +836,105 @@ class AudioSupervisorV3:
         else:
             print("[RECORD] Not recording")
     
+    # TEMPORARILY COMMENTED: Isolating sequencer
+    # All sequencer handlers commented out
+    '''
+    def handle_seq_create(self, unused_addr, *args):
+        """Create a new sequencer: /seq/create <id>"""
+        if args:
+            seq_id = str(args[0])
+            if self.sequencer_manager.create_sequencer(seq_id):
+                print(f"[SEQ] Created sequencer '{seq_id}'")
+            else:
+                print(f"[SEQ] Sequencer '{seq_id}' already exists")
+    
+    def handle_seq_config(self, unused_addr, *args):
+        """Configure sequencer: /seq/config <id> <bpm> <steps> <division>"""
+        if len(args) >= 4:
+            seq_id = str(args[0])
+            bpm = float(args[1])
+            steps = int(args[2])
+            division = int(args[3])
+            self.sequencer_manager.queue_update(seq_id, 'config', (bpm, steps, division))
+            print(f"[SEQ] Configured {seq_id}: {bpm} BPM, {steps} steps, 1/{division} notes")
+    
+    def handle_seq_pattern(self, unused_addr, *args):
+        """Set pattern: /seq/pattern <id> <pattern_string>"""
+        if len(args) >= 2:
+            seq_id = str(args[0])
+            pattern = str(args[1])
+            self.sequencer_manager.queue_update(seq_id, 'pattern', pattern)
+            print(f"[SEQ] Set pattern for {seq_id}: {pattern}")
+    
+    def handle_seq_param_lane(self, unused_addr, *args):
+        """Set parameter lane: /seq/param_lane <id> <param> <values...>"""
+        if len(args) >= 3:
+            seq_id = str(args[0])
+            param = str(args[1])
+            # Combine remaining args as CSV
+            values = ','.join(str(v) for v in args[2:])
+            self.sequencer_manager.queue_update(seq_id, 'param_lane', (param, values))
+            print(f"[SEQ] Set param lane {param} for {seq_id}")
+    
+    def handle_seq_assign(self, unused_addr, *args):
+        """Assign sequencer output: /seq/assign <id> <gate|param> <module> [param_name]"""
+        if len(args) >= 3:
+            seq_id = str(args[0])
+            assign_type = str(args[1])
+            module_id = str(args[2])
+            
+            if assign_type == 'gate':
+                self.sequencer_manager.queue_update(seq_id, 'assign_gate', module_id)
+                print(f"[SEQ] Assigned {seq_id} gate to {module_id}")
+            elif assign_type == 'param' and len(args) >= 5:
+                param_name = str(args[3])
+                module_param = str(args[4])
+                self.sequencer_manager.queue_update(seq_id, 'assign_param', (param_name, module_id, module_param))
+                print(f"[SEQ] Assigned {seq_id} param {param_name} to {module_id}.{module_param}")
+    
+    def handle_seq_start(self, unused_addr, *args):
+        """Start sequencer: /seq/start <id>"""
+        if args:
+            seq_id = str(args[0])
+            self.sequencer_manager.queue_update(seq_id, 'start', None)
+            print(f"[SEQ] Started {seq_id}")
+    
+    def handle_seq_stop(self, unused_addr, *args):
+        """Stop sequencer: /seq/stop <id>"""
+        if args:
+            seq_id = str(args[0])
+            self.sequencer_manager.queue_update(seq_id, 'stop', None)
+            print(f"[SEQ] Stopped {seq_id}")
+    
+    def handle_seq_reset(self, unused_addr, *args):
+        """Reset sequencer: /seq/reset <id>"""
+        if args:
+            seq_id = str(args[0])
+            self.sequencer_manager.queue_update(seq_id, 'reset', None)
+            print(f"[SEQ] Reset {seq_id}")
+    
+    def handle_seq_reset_all(self, unused_addr):
+        """Reset all sequencers: /seq/reset_all"""
+        for seq_id in self.sequencer_manager.sequencers:
+            self.sequencer_manager.queue_update(seq_id, 'reset', None)
+        print("[SEQ] Reset all sequencers")
+    
+    def handle_seq_bpm(self, unused_addr, *args):
+        """Change BPM: /seq/bpm <id> <bpm>"""
+        if len(args) >= 2:
+            seq_id = str(args[0])
+            bpm = float(args[1])
+            self.sequencer_manager.queue_update(seq_id, 'bpm', bpm)
+            print(f"[SEQ] Set {seq_id} to {bpm} BPM")
+    
+    def handle_seq_gate_len(self, unused_addr, *args):
+        """Set gate length: /seq/gate_len <id> <fraction>"""
+        if len(args) >= 2:
+            seq_id = str(args[0])
+            gate_len = float(args[1])
+            self.sequencer_manager.queue_update(seq_id, 'gate_length', gate_len)
+            print(f"[SEQ] Set {seq_id} gate length to {gate_len}")
+    '''
     def start_osc_server(self):
         """Start OSC server with patch commands (CP3)"""
         disp = dispatcher.Dispatcher()
@@ -768,6 +954,20 @@ class AudioSupervisorV3:
         disp.map("/record/start", self.handle_record_start)
         disp.map("/record/stop", self.handle_record_stop)
         disp.map("/record/status", self.handle_record_status)
+        
+        # Sequencer commands
+        # TEMPORARILY COMMENTED: Isolating sequencer
+        # disp.map("/seq/create", self.handle_seq_create)
+        # disp.map("/seq/config", self.handle_seq_config)
+        # disp.map("/seq/pattern", self.handle_seq_pattern)
+        # disp.map("/seq/param_lane", self.handle_seq_param_lane)
+        # disp.map("/seq/assign", self.handle_seq_assign)
+        # disp.map("/seq/start", self.handle_seq_start)
+        # disp.map("/seq/stop", self.handle_seq_stop)
+        # disp.map("/seq/reset", self.handle_seq_reset)
+        # disp.map("/seq/reset_all", self.handle_seq_reset_all)
+        # disp.map("/seq/bpm", self.handle_seq_bpm)
+        # disp.map("/seq/gate_len", self.handle_seq_gate_len)
         
         # Use consistent environment variables
         osc_host = os.environ.get('CHRONUS_OSC_HOST', '127.0.0.1')
@@ -876,7 +1076,8 @@ class AudioSupervisorV3:
         
         # Read from active ring using latest-wins with cushion
         active_ring = self.slot0_audio_ring if self.active_idx.value == 0 else self.slot1_audio_ring
-        buffer_view = active_ring.read_latest_keep(keep_after_read=2)  # Skip stale but keep bigger cushion (reduce popping)
+        keep_after_read = int(os.environ.get('CHRONUS_KEEP_AFTER_READ', '2'))
+        buffer_view = active_ring.read_latest_keep(keep_after_read=keep_after_read)  # Skip stale but keep bigger cushion (reduce popping)
         
         if buffer_view is not None:
             # Copy view to last_good (allocation-free)
@@ -896,6 +1097,11 @@ class AudioSupervisorV3:
         
         # Log ring stats periodically with enhanced metrics (Senior Dev)
         if self.total_reads % 1000 == 0:
+            # Debug info for frames and active index
+            if os.environ.get('CHRONUS_VERBOSE'):
+                slot0_occ = self.slot0_audio_ring.get_stats()['occupancy']
+                slot1_occ = self.slot1_audio_ring.get_stats()['occupancy']
+                print(f"[CALLBACK DEBUG] frames={frames}, active_idx={self.active_idx.value}, ring0_occ={slot0_occ}, ring1_occ={slot1_occ}")
             stats = active_ring.get_stats()
             occupancy = stats['occupancy']
             
@@ -918,6 +1124,11 @@ class AudioSupervisorV3:
         
         # Start OSC server
         self.start_osc_server()
+        
+        # Start sequencer manager thread
+        # TEMPORARILY DISABLED: Debugging emergency fill issue
+        # self.sequencer_manager.start()
+        # print("[SEQ] Sequencer manager started")
         
         # Log device and configuration info
         print(f"[CONFIG] Requested: SR={SAMPLE_RATE}Hz, BS={BUFFER_SIZE}, NB={NUM_BUFFERS}")
@@ -964,6 +1175,12 @@ class AudioSupervisorV3:
             self.stop_recording()
         
         self.shutdown.set()
+        
+        # Stop sequencer manager
+        # TEMPORARILY COMMENTED: Isolating sequencer
+        # if hasattr(self, 'sequencer_manager'):
+        #     self.sequencer_manager.running = False
+        #     self.sequencer_manager.join(timeout=1.0)
         
         # Stop workers
         for i in range(2):
