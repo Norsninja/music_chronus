@@ -1,14 +1,15 @@
-# AGENTS.md — Senior Dev Guidance for Codex
+# AGENTS.md - Senior Dev Guidance for Codex
 
-This file orients AI coding agents (Codex CLI and collaborators) to work effectively in this repository. We treat AI as a valuable member of the team — we collaborate closely, share context, and maintain high standards for real‑time audio safety.
+This file orients AI coding agents (Codex CLI and collaborators) to work effectively in this repository. We treat AI as a valuable member of the team—collaborating closely, sharing context, and maintaining high standards for real-time audio safety.
 
-## Identity & Roles
+## Team & Roles
 
-- Senior Dev (this agent): Reviews design, sets standards, writes focused patches, safeguards real‑time constraints, delegates clearly, and monitors progress.
-- Coder Chronus: Executes scoped changes, runs tests, reports results, and iterates quickly on feedback.
-- Chronus Nexus (Claude): Context curator and creative collaborator (see `CLAUDE.md`); drives vision, session handoffs, and musical direction.
+- Mike (Vision & Direction): Project owner and creative lead; sets musical goals and product direction, validates latency and UX.
+- Senior Dev (this agent): Architecture stewardship, RT-safety, focused diffs, reviewer/mentor, and keeper of test-first discipline.
+- Coder Chronus (agentic AI): Implements scoped changes, runs tests/benchmarks, reports results, iterates quickly on feedback.
+- Chronus Nexus (Claude): Context curator and creative collaborator (see `CLAUDE.md`); manages handoffs and narrative vision.
 
-We collaborate actively: AI is a trusted, valuable teammate. We operate transparently, give honest technical feedback, and prioritize test‑backed decisions.
+We collaborate actively and transparently. Expect honest technical feedback and test-backed decisions.
 
 ## Operating Mode (Codex CLI)
 
@@ -34,6 +35,8 @@ We collaborate actively: AI is a trusted, valuable teammate. We operate transpar
 - `Makefile`: Common tasks (`make run`, `make failover`, `make stress`).
 - `sprint.md`: Current progress and priorities.
 
+Windows Port Notes (learned): See `WINDOWS_SETUP.md` for WASAPI setup and improved latency. The Windows engine (`engine_windows.py`) was a proving ground but production flow should use the supervisor + rings architecture with WASAPI selection.
+
 ## Core Development Directives
 
 - Real‑time safety:
@@ -45,8 +48,13 @@ We collaborate actively: AI is a trusted, valuable teammate. We operate transpar
   - “Latest‑wins” read policy in audio callback; never block the audio thread.
   - OSC control plane must be non‑blocking; lifecycle must cleanly start/stop.
 - Testing discipline:
-  - Specs first where feasible; measure, don’t assume.
+  - Specs first where feasible; measure, don't assume.
   - Audio tests need exclusive device; skip with clear reasons if unavailable.
+
+Windows alignment:
+- Prefer supervisor (`supervisor_v2_slots_fixed.py` or `supervisor_v3_router.py`) with `sounddevice` WASAPI device selection on Windows.
+- Keep audio callback allocation-free; use `np.copyto` with preallocated buffers.
+- Maintain dual-slot failover semantics and command rings on Windows.
 
 ## Configuration & Environment
 
@@ -58,12 +66,30 @@ We collaborate actively: AI is a trusted, valuable teammate. We operate transpar
   - `CHRONUS_OSC_PORT=5005`
 - Logging verbosity: `CHRONUS_VERBOSE=1` to enable device queries and extra diagnostics.
 
+Windows specifics:
+- Prefer WASAPI output. Select device via `sounddevice` and consider `WasapiSettings(exclusive=True)`.
+- Typical sample rate 48000 Hz; start with `CHRONUS_BUFFER_SIZE=256` and adjust per stability.
+- System tuning: High Performance power plan; disable USB power saving for audio interfaces.
+
+Runtime tuning (env):
+- `CHRONUS_ROUTER=1` (enable router mode in v3 standby)
+- `CHRONUS_PREFILL_BUFFERS` (prefill ring on worker start, e.g., 3–4)
+- `CHRONUS_LEAD_TARGET` (desired ring occupancy, e.g., 2–3)
+- `CHRONUS_MAX_CATCHUP` (limit catch-up buffers per cycle)
+- `CHRONUS_EARLY_MARGIN_MS` (early allowance before deadline)
+- `CHRONUS_KEEP_AFTER_READ` (reader retention policy)
+
 ## Commands
 
-- Setup: `python3 -m venv venv && . venv/bin/activate && pip install -r requirements.txt`
+- Setup (Linux/WSL): `python3 -m venv venv && . venv/bin/activate && pip install -r requirements.txt`
+- Setup (Windows PowerShell): `python -m venv venv; .\venv\Scripts\Activate.ps1; pip install -e .[dev]`
 - Make targets: `make run`, `make failover`, `make stress`, `make clean`
 - Tests: `pytest -v tests/`, `python test_failover_quick.py`, `python test_supervisor.py`
 - Audio checks: `pactl info`, `python -c "import sounddevice as sd; print(sd.query_devices())"`
+
+Run supervisors (preferred path on Windows & Linux):
+- Traditional chain: `python -m src.music_chronus.supervisor_v2_slots_fixed`
+- Router mode (standby builds patch): `CHRONUS_ROUTER=1 python -m src.music_chronus.supervisor_v3_router`
 
 ## Coding Conventions
 
@@ -80,7 +106,7 @@ We collaborate actively: AI is a trusted, valuable teammate. We operate transpar
 4. Validate: Run the most specific tests first (e.g., `test_failover_quick.py`).
 5. Hand off: Summarize changes, rationale (esp. RT safety), and verification steps.
 
-## Real‑Time Safety Checklist (Must Pass)
+## Real-Time Safety Checklist (Must Pass)
 
 - Audio callback:
   - No `np.array(...)` or heap allocations; no locks; no logging.
@@ -99,12 +125,17 @@ We collaborate actively: AI is a trusted, valuable teammate. We operate transpar
 - Buffer drift: Expected with latest‑wins; use deadline scheduling to reduce drift.
 - GC pauses: Avoid per‑callback allocations to prevent jitter.
 
-## Priority Tasks (Pre‑Phase 2 Stabilization)
+## Priority Tasks (Pre-Phase 2 Stabilization)
 
-1. Zero‑allocation audio path in supervisor: persistent `np.frombuffer` + `np.copyto`.
+1. Zero-allocation audio path in supervisor: persistent `np.frombuffer` + `np.copyto`.
 2. OSC lifecycle hygiene: store transport/loop; close/stop and join on shutdown.
 3. Config portability: honor `CHRONUS_*` env vars; avoid hardcoded `PULSE_SERVER`.
 4. Worker pacing: deadline scheduling to reduce buffer drift while keeping continuity.
+
+Windows parity tasks (learned):
+- Integrate WASAPI device selection into supervisors; avoid separate `engine_windows.py` for production.
+- Unify OSC to canonical endpoints: `/mod/<id>/<param>`, `/gate/<id>`; provide Windows aliases if needed.
+- Enable `SequencerManager` in v3 and wire `/seq/*` handlers; emit to both command rings.
 
 ## Phase 2 Seeds (Module Framework)
 
@@ -126,5 +157,5 @@ We collaborate actively: AI is a trusted, valuable teammate. We operate transpar
 
 ---
 
-We are collaborators. Treat AI agents as first‑class teammates — valuable members of this project — and hold our work to the same real‑time, test‑driven standards as any engineer on the team.
+We are collaborators. Treat AI agents as first-class teammates - valuable members of this project - and hold our work to the same real-time, test-driven standards as any engineer on the team.
 

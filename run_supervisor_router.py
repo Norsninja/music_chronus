@@ -29,14 +29,14 @@ def main():
     print("=" * 60)
     
     if router_enabled:
-        print("🎛️  ROUTER MODE ENABLED")
+        print("[ROUTER MODE ENABLED]")
         print("Available commands:")
         print("  /patch/create <id> <type>  - Create module")
         print("  /patch/connect <src> <dst> - Connect modules")
         print("  /patch/commit             - Apply patch")
         print("  /patch/abort              - Cancel patch")
     else:
-        print("📻 LINEAR CHAIN MODE (default)")
+        print("[LINEAR CHAIN MODE] (default)")
         print("Set CHRONUS_ROUTER=1 to enable router mode")
     
     print("\nTraditional commands always available:")
