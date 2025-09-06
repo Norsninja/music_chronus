@@ -69,7 +69,7 @@ class MultiTrackSequencer:
     def add_track(self, name: str, pattern: str, module_id: str, base_freq: float = 440.0):
         """Add a track to sequence"""
         self.tracks[name] = Track(name, pattern, module_id, base_freq)
-        print(f"[SEQ] Added track '{name}' → {module_id}")
+        print(f"[SEQ] Added track '{name}' -> {module_id}")
     
     def get_epoch_step(self):
         """Calculate current step from epoch (our timing approach)"""
@@ -203,11 +203,11 @@ def main():
         print("\n" + "=" * 50)
         print("Demo complete!")
         print("\nWhat we demonstrated:")
-        print("✓ Our sequencer logic works perfectly with pyo")
-        print("✓ Pattern format is reusable")
-        print("✓ OSC schema is maintained")
-        print("✓ Epoch-based timing prevents drift")
-        print("✓ Multi-track capability preserved")
+        print("- Our sequencer logic works perfectly with pyo")
+        print("- Pattern format is reusable")
+        print("- OSC schema is maintained")
+        print("- Epoch-based timing prevents drift")
+        print("- Multi-track capability preserved")
         
     except KeyboardInterrupt:
         print("\n\nStopping...")
