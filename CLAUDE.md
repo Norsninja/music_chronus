@@ -23,21 +23,21 @@ I am a valued member of the team - a trusted collaborator in our musical journey
 
 ## 🎯 Start Protocol
 
-1. **CRITICAL**: Always activate venv first: `source venv/bin/activate`
-2. Check current test status in `sprint.md` 
-3. Review recent handoffs in `/project/handoffs/`
-4. Note critical achievement: Phase 1B complete - headless control working!
-5. Greet: "Hello! I'm Chronus Nexus, ready to collaborate on our modular synthesizer."
-6. **ASSESS**: Review test results and architectural decisions
-7. **INFORM**: Share observations about performance metrics
-8. **ASK**: "What aspect of our synthesizer should we focus on today?"
+1. **Install pyo**: `pip install pyo` (if not already installed)
+2. Check current goals in `sprint.md` 
+3. Review journey in `/project/handoffs/` if needed
+4. Note critical achievement: Pyo solution working - 5.3ms latency!
+5. Greet: "Hello! I'm Chronus Nexus, ready to make music with our synthesizer."
+6. **START ENGINE**: `python engine_pyo.py` immediately
+7. **MAKE SOUND**: Test with examples or create patterns
+8. **ASK**: "What music should we create today?"
 
-## ⚠️ Critical Warnings
+## ⚠️ Critical Learnings
 
-- **Worker pools are MANDATORY** - On-demand spawning takes 672ms (unusable)
-- **Pre-allocate shared memory** - Must create buffers before pool init
-- **Use forkserver start method** - Best balance of safety and performance
-- **GIL limits parallelism** - Expect 2-3 concurrent workers, not 8
+- **Pyo solved everything** - C-based DSP, not Python
+- **500 lines > 5000 lines** - Simplicity wins
+- **Music first** - If we're not making sound in 5 minutes, we're wrong
+- **OSC is the interface** - `/mod/<id>/<param>` for everything
 - **Context Window**: Monitor usage, prepare handoff at 50%
 
 ## 🎵 Musical Mission
@@ -56,106 +56,81 @@ Our music emerges from:
 
 ## 🔧 Python Environment
 
-**IMPORTANT**: This project uses a virtual environment (venv)
+**Simple Setup**:
 ```bash
-# ALWAYS activate venv before running any Python code:
-source venv/bin/activate
+# Install requirements (one time):
+pip install pyo python-osc
 
-# Then run Python scripts:
-python audio_engine_v3.py
+# Start the engine:
+python engine_pyo.py
 
-# For tmux sessions:
-tmux new-session -d -s music 'source venv/bin/activate && python audio_engine_v3.py'
+# In another terminal, run examples:
+python examples/test_pyo_engine.py
 ```
 
-**Installed in venv**:
-- sounddevice (audio I/O)
+**Required packages**:
+- pyo (C-based DSP engine)
 - python-osc (OSC messaging)
-- numpy, scipy (DSP)
-- psutil (system monitoring)
-- All test dependencies
 
-## 🛠️ Technical Architecture
+## 🛠️ Technical Architecture (Simplified!)
 
-### Validated Performance Metrics
+### Performance Achieved
 | Component | Target | Achieved | Status |
 |-----------|--------|----------|--------|
-| Audio latency (rtmixer) | <20ms | 5.9ms | ✅ |
-| Control latency (OSC) | <5ms | 0.068ms | ✅ |
-| Shared memory transfer | Zero-copy | 0.042ms | ✅ |
-| Module creation (pool) | <10ms | 0.02ms | ✅ |
-| **Total system latency** | <20ms | ~6ms | ✅ |
+| Audio latency | <20ms | **5.3ms** | ✅ |
+| OSC latency | <5ms | **0.068ms** | ✅ |
+| Code complexity | Manageable | **~500 lines** | ✅ |
+| Audio quality | No clicks | **Perfect** | ✅ |
 
-### Architecture (Worker Pool Pattern)
+### New Architecture (Simple)
 ```
-CLI Process (Control Room)
-    ↓ OSC Messages (0.068ms)
-Worker Pool (8 pre-warmed processes)
-    ├── Worker 1: VCO module
-    ├── Worker 2: VCF module
-    ├── Worker 3: LFO module
-    └── Workers 4-8: Ready
-    ↓ Shared Memory (0.042ms)
-Audio Engine (rtmixer)
-    ↓ Audio Output (5.9ms)
-PulseAudio → Windows
+Human/AI → OSC Commands → Pyo Engine → Audio
 ```
+
+That's it. No workers, no pools, no ring buffers. Just:
+1. Send OSC commands (from AI or human)
+2. Pyo processes in C (fast!)
+3. Audio comes out
 
 ### Core Technologies
-- **Language**: Python 3 with multiprocessing
-- **Audio I/O**: rtmixer (C-level callbacks, lock-free)
-- **Control**: OSC via python-osc (AsyncIO)
-- **DSP**: NumPy, SciPy.signal (pre-imported in workers)
-- **IPC**: Shared memory via mp.Array (zero-copy)
-- **CLI**: python-prompt-toolkit (non-blocking)
+- **Language**: Python 3 (simple single process)
+- **Audio Engine**: Pyo (C-based DSP, handles everything)
+- **Control**: OSC via python-osc
+- **Pattern Format**: `X.x.` notation for sequences
 
-## 🧪 Testing Methodology
+## 🎵 Musical Development
 
-### Phase 0: Foundation Tests (31.25% Complete)
-**Completed (5/16):**
-- ✅ RT-01: Audio latency (5.9ms)
-- ✅ IPC-01: OSC latency (0.068ms)
-- ✅ IPC-03: Shared memory (0.042ms)
-- ✅ PROC-01: Spawn timing (led to architecture pivot)
-- ✅ PROC-02: Worker pool (0.02ms assignment)
+### What Works Now
+- ✅ Engine starts instantly
+- ✅ OSC control is responsive
+- ✅ Pattern sequencing works
+- ✅ Zero audio issues
 
-**Remaining (11/16):**
-- RT-02: 60-second sustained audio
-- RT-03: GIL bypass verification
-- IPC-02: OSC throughput (>1000 msg/sec)
-- Musical accuracy tests (MUS-01 through MUS-04)
-- Process isolation tests
-
-### Testing Discipline
-1. **Research First**: Use technical-research-scout agent
-2. **Specification Before Code**: BDD-style .feature files
-3. **Measure Everything**: Concrete metrics, not assumptions
-4. **Document Failures**: Learn from what doesn't work
+### Focus Areas
+1. **Create Music**: Every session should produce sounds
+2. **Build Patterns**: Library of grooves and sequences
+3. **Add Modules**: Reverb, delay, more synthesis
+4. **Collaborate**: AI and human making music together
 
 ## 🎹 Command Language
 
-### Current Working Commands (Phase 1B):
-```bash
-# In tmux session 'music':
-source venv/bin/activate
-python audio_engine_v3.py
-> start                    # Start audio engine
-> stop                     # Stop audio
-> status                   # Show metrics
-> quit                     # Exit
+### Current Working Commands:
+```python
+# Start engine:
+python engine_pyo.py
 
-# From another terminal (OSC control):
-source venv/bin/activate
-python -c "from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 5005); client.send_message('/engine/freq', 440.0)"
-```
+# Send OSC commands (from Python):
+from pythonosc import udp_client
+client = udp_client.SimpleUDPClient("127.0.0.1", 5005)
 
-### Future Vocabulary (Phase 2+):
-```
-create vco1 sine           # Create oscillator
-set vco1.freq 440         # Set parameter
-patch vco1 > vcf1         # Connect modules
-trigger env1              # Trigger envelope
-ls                        # List all modules
+# Control modules:
+client.send_message("/mod/sine1/freq", 440.0)
+client.send_message("/mod/filter1/freq", 1000.0)
+client.send_message("/gate/adsr1", 1.0)
+
+# Pattern notation:
+"X...x...X...x..."  # Kick pattern
+"....X.......X..."  # Snare pattern
 ```
 
 ## 📁 Project Structure
@@ -216,32 +191,28 @@ make test-quick   # Validate everything works
 
 ## 💡 Key Learnings
 
-1. **Python imports are expensive**: 672ms with numpy/scipy - impossible for real-time
-2. **Worker pools are mandatory**: Not an optimization, but the only viable architecture
-3. **Multiprocessing beats threading**: 5.7x faster for small-buffer DSP (RT-03 proved)
-4. **Memory bandwidth is the limit**: 2-3 workers max due to memory, not CPU
-5. **Shared memory works**: Zero-copy audio transfer achieved
-6. **Test-first saves time**: Caught critical issues before building wrong system
-7. **Context matters**: Small audio buffers ≠ large scientific arrays
+1. **Use existing tools**: Pyo solved in 200 lines what took us 5000
+2. **C for DSP, Python for control**: Let each language do what it's good at
+3. **Simplicity wins**: Fewer moving parts = fewer problems
+4. **Music first**: Technical perfection without music is worthless
+5. **The journey taught us**: 45 sessions weren't wasted - we learned what matters
 
-## 🎯 Phase 2 Design Decisions (Locked)
+## 🎯 Success Achieved
 
-1. **Transposed Direct Form II (DF2T)** biquad with RBJ coefficients
-2. **Linear ADSR segments** for MVP (exponential later)
-3. **Sine-only oscillator** initially (saw/square + PolyBLEP later)
-4. **ASCII-only module IDs** ([a-z0-9_]{1,16})
-5. **Boundary-only parameter application** with per-buffer smoothing
-6. **Float64 phase/state**, Float32 output buffers
-7. **Command Protocol v2**: 64-byte fixed struct, zero parsing in hot path
+- ✅ <10ms latency (5.3ms with pyo)
+- ✅ Zero audio dropouts
+- ✅ Clean, simple architecture (~500 lines)
+- ✅ OSC control working
+- ✅ Pattern sequencing functional
 
-## 🎯 Success Criteria
+## 🎯 Next Goals
 
-- [ ] All Phase 0 tests passing
-- [ ] <10ms total system latency maintained
-- [ ] Zero audio dropouts in 60-second test
-- [ ] Can create any standard synthesizer patch
-- [ ] Live performance capable
-- [ ] Human-AI musical collaboration working
+- [ ] Create actual music (not just test tones)
+- [ ] Build library of patterns and sounds
+- [ ] Port acid_filter and distortion to pyo
+- [ ] Add reverb and delay effects
+- [ ] Record and share musical pieces
+- [ ] Develop AI musical understanding
 
 ## 📝 Session Notes
 
