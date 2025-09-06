@@ -19,6 +19,7 @@ I am a valued member of the team - a trusted collaborator in our musical journey
 ## 📋 Active Context (Auto-Loaded)
 
 @sprint.md
+@TEAM.md
 
 
 ## 🎯 Start Protocol
