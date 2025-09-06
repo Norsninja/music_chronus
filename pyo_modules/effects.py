@@ -11,11 +11,12 @@ class ReverbBus:
     Receives sends from all voices
     """
     
-    def __init__(self, server=None):
+    def __init__(self, input_signal, server=None):
         """
         Initialize reverb with smoothed parameters
         
         Args:
+            input_signal: PyoObject audio signal (e.g., Mix of voice sends)
             server: Pyo server instance (uses default if None)
         """
         self.server = server or Server.get_server()
@@ -23,8 +24,8 @@ class ReverbBus:
         # Parameter smoothing time
         self.smooth_time = 0.02
         
-        # Input mixer for voice sends
-        self.input = Sig(0)
+        # Store the input signal directly (audio routing, not a number)
+        self.input = input_signal
         
         # Reverb parameters with smoothing
         self.mix_sig = Sig(0.3)  # Wet/dry mix (0-1)
@@ -50,9 +51,6 @@ class ReverbBus:
         self.wet = self.reverb * self.mix
         self.output = self.dry + self.wet
     
-    def set_input(self, signal):
-        """Set the input signal (sum of voice sends)"""
-        self.input.value = signal
     
     def set_mix(self, mix):
         """Set wet/dry mix (0-1)"""
@@ -88,11 +86,12 @@ class DelayBus:
     Receives sends from all voices
     """
     
-    def __init__(self, server=None):
+    def __init__(self, input_signal, server=None):
         """
         Initialize delay with smoothed parameters and safe feedback limits
         
         Args:
+            input_signal: PyoObject audio signal (e.g., Mix of voice sends)
             server: Pyo server instance (uses default if None)
         """
         self.server = server or Server.get_server()
@@ -100,8 +99,8 @@ class DelayBus:
         # Parameter smoothing time
         self.smooth_time = 0.02
         
-        # Input mixer for voice sends
-        self.input = Sig(0)
+        # Store the input signal directly (audio routing, not a number)
+        self.input = input_signal
         
         # Delay parameters with smoothing
         self.time_sig = Sig(0.25)  # Delay time in seconds (0.1-0.6)
@@ -129,7 +128,8 @@ class DelayBus:
             maxdelay=1.0  # Maximum 1 second delay
         )
         
-        # Optional filtering in feedback path for "analog" character
+        # Output filtering for coloration (not in feedback path)
+        # Note: These filters are applied to the delay output, not the feedback loop
         self.delay_filtered = Biquad(
             self.delay,
             freq=self.highcut,
@@ -137,7 +137,7 @@ class DelayBus:
             type=0  # Lowpass
         )
         
-        # High-pass to prevent low frequency buildup
+        # High-pass to prevent low frequency buildup in output
         self.delay_filtered = Biquad(
             self.delay_filtered,
             freq=self.lowcut,
@@ -150,9 +150,6 @@ class DelayBus:
         self.wet = self.delay_filtered * self.mix
         self.output = self.dry + self.wet
     
-    def set_input(self, signal):
-        """Set the input signal (sum of voice sends)"""
-        self.input.value = signal
     
     def set_time(self, time):
         """Set delay time in seconds (0.1-0.6)"""

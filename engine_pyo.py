@@ -73,11 +73,7 @@ class PyoEngine:
             self.voices[voice_id] = Voice(voice_id, self.server)
             print(f"[PYO] Created {voice_id}")
         
-        # Create global effects
-        self.reverb = ReverbBus(self.server)
-        self.delay = DelayBus(self.server)
-        
-        # Create mixers for routing
+        # Create routing and effects with proper audio signal passing
         self.setup_routing()
         
         print("[PYO] Created 4 voices + reverb + delay")
@@ -92,12 +88,14 @@ class PyoEngine:
         # Sum all reverb sends
         reverb_sends = [voice.get_reverb_send() for voice in self.voices.values()]
         self.reverb_input = Mix(reverb_sends, voices=1)
-        self.reverb.set_input(self.reverb_input)
         
         # Sum all delay sends
         delay_sends = [voice.get_delay_send() for voice in self.voices.values()]
         self.delay_input = Mix(delay_sends, voices=1)
-        self.delay.set_input(self.delay_input)
+        
+        # Create effects with proper audio signal inputs (not Sig(0)!)
+        self.reverb = ReverbBus(self.reverb_input, self.server)
+        self.delay = DelayBus(self.delay_input, self.server)
         
         # Master output: dry + reverb + delay
         self.master = Mix([
