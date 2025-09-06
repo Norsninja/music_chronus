@@ -1,31 +1,11 @@
-# Core Audio Requirements
-sounddevice>=0.4.6
-numpy>=1.24.0
+# Pyo-based Music Chronus requirements
+# Install with: pip install -r requirements_pyo.txt
 
-# Real-time Audio (C-level callbacks)
-# Note: rtmixer requires CFFI and compilation
-cffi>=1.15.0
-# rtmixer==0.1.3  # Uncomment after testing if it compiles in WSL2
+# Core audio synthesis engine (C-based DSP)
+pyo>=1.0.5
 
-# Inter-Process Communication
+# OSC control (already have this)
 python-osc>=1.8.0
 
-# Session Management
-libtmux>=0.23.0
-
-# CLI Interface
-prompt-toolkit>=3.0.0
-
-# Testing Framework
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-benchmark>=4.0.0
-
-# Audio Analysis (for testing)
-scipy>=1.11.0
-librosa>=0.10.0  # For audio analysis in tests
-
-# Development Tools
-black>=23.0.0  # Code formatter
-pylint>=2.17.0  # Linter
-mypy>=1.5.0  # Type checking
+# Optional but recommended
+numpy>=1.24.0  # For any custom processing
