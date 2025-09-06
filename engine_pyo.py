@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Music Chronus - Pyo Audio Engine
-Proof of concept using pyo's C DSP engine instead of custom Python DSP
-Maintains compatibility with existing OSC control schema
+Polyphonic synthesizer with 4 voices and global effects
+Maintains backward compatibility with existing OSC control schema
 """
 
+import os
 import sys
 import time
 import threading
@@ -12,14 +13,23 @@ from typing import Dict, Any
 from pyo import *
 from pythonosc import dispatcher, osc_server
 
+# Import our pyo modules
+from pyo_modules import Voice, ReverbBus, DelayBus
+
 class PyoEngine:
     """
     Headless modular synthesizer using pyo's C backend
     Compatible with existing OSC control patterns
     """
     
-    def __init__(self, sample_rate=48000, buffer_size=256, device_id=17):
-        """Initialize pyo server with Windows WASAPI"""
+    def __init__(self, sample_rate=None, buffer_size=None, device_id=None):
+        """Initialize pyo server with environment-aware configuration"""
+        
+        # Get configuration from environment or use defaults
+        sample_rate = sample_rate or int(os.environ.get('CHRONUS_SAMPLE_RATE', 48000))
+        buffer_size = buffer_size or int(os.environ.get('CHRONUS_BUFFER_SIZE', 256))
+        device_id = device_id if device_id is not None else int(os.environ.get('CHRONUS_DEVICE_ID', -1))
+        self.verbose = os.environ.get('CHRONUS_VERBOSE', '').lower() in ('1', 'true', 'yes')
         
         # Configure pyo server for Windows
         self.server = Server(
@@ -38,11 +48,12 @@ class PyoEngine:
         # Boot server but don't start yet
         self.server.boot()
         
-        # Module storage - using dict for dynamic access
-        self.modules = {}
+        if self.verbose:
+            print("[PYO] Available audio devices:")
+            pa_list_devices()
         
-        # Create initial module chain: sine -> adsr -> filter
-        self.build_initial_chain()
+        # Create voices and effects
+        self.setup_voices_and_effects()
         
         # OSC server setup
         self.setup_osc_server()
@@ -52,41 +63,51 @@ class PyoEngine:
         print(f"[PYO] Buffer size: {buffer_size} samples")
         print(f"[PYO] Latency: {buffer_size/sample_rate*1000:.1f}ms")
     
-    def build_initial_chain(self):
-        """Build the initial sine->adsr->filter chain"""
+    def setup_voices_and_effects(self):
+        """Create 4 voices and global effects buses"""
         
-        # ADSR envelope with reasonable defaults
-        self.modules['adsr1'] = Adsr(
-            attack=0.01,   # 10ms attack
-            decay=0.1,     # 100ms decay
-            sustain=0.7,   # 70% sustain level
-            release=0.5,   # 500ms release
-            dur=0,         # Infinite duration (gate controlled)
-            mul=0.3        # Overall amplitude
-        )
+        # Create 4 voices
+        self.voices = {}
+        for i in range(1, 5):
+            voice_id = f"voice{i}"
+            self.voices[voice_id] = Voice(voice_id, self.server)
+            print(f"[PYO] Created {voice_id}")
         
-        # Make envelope exponential for more natural sound
-        self.modules['adsr1'].setExp(0.75)
+        # Create global effects
+        self.reverb = ReverbBus(self.server)
+        self.delay = DelayBus(self.server)
         
-        # Sine oscillator modulated by envelope
-        self.modules['sine1'] = Sine(
-            freq=440,  # A4
-            mul=self.modules['adsr1']
-        )
+        # Create mixers for routing
+        self.setup_routing()
         
-        # Biquad lowpass filter
-        # Type 0 = lowpass, 1 = highpass, 2 = bandpass
-        self.modules['filter1'] = Biquad(
-            self.modules['sine1'],
-            freq=1000,  # Cutoff frequency
-            q=2,        # Resonance
-            type=0      # Lowpass
-        )
+        print("[PYO] Created 4 voices + reverb + delay")
+    
+    def setup_routing(self):
+        """Setup signal routing: voices -> effects -> output"""
         
-        # Connect filter output to audio out
-        self.modules['filter1'].out()
+        # Sum all voice dry signals
+        dry_signals = [voice.get_dry_signal() for voice in self.voices.values()]
+        self.dry_mix = Mix(dry_signals, voices=1)  # Mix to mono
         
-        print("[PYO] Module chain created: sine1 -> adsr1 -> filter1")
+        # Sum all reverb sends
+        reverb_sends = [voice.get_reverb_send() for voice in self.voices.values()]
+        self.reverb_input = Mix(reverb_sends, voices=1)
+        self.reverb.set_input(self.reverb_input)
+        
+        # Sum all delay sends
+        delay_sends = [voice.get_delay_send() for voice in self.voices.values()]
+        self.delay_input = Mix(delay_sends, voices=1)
+        self.delay.set_input(self.delay_input)
+        
+        # Master output: dry + reverb + delay
+        self.master = Mix([
+            self.dry_mix,
+            self.reverb.get_output(),
+            self.delay.get_output()
+        ], voices=1)
+        
+        # Send to output
+        self.master.out()
     
     def setup_osc_server(self):
         """Setup OSC server for control messages"""
@@ -104,6 +125,7 @@ class PyoEngine:
         self.dispatcher.map("/engine/start", lambda addr, *args: self.start())
         self.dispatcher.map("/engine/stop", lambda addr, *args: self.stop())
         self.dispatcher.map("/engine/status", lambda addr, *args: self.print_status())
+        self.dispatcher.map("/engine/list", lambda addr, *args: self.list_modules())
         
         # Catch-all for debugging
         self.dispatcher.set_default_handler(self.handle_unknown)
@@ -134,27 +156,66 @@ class PyoEngine:
         param = parts[3]
         value = args[0]
         
-        print(f"[OSC] Set {module_id}.{param} = {value}")
+        # Handle sub-parameters like /mod/voice1/adsr/attack
+        if len(parts) > 4:
+            param = '/'.join(parts[3:])
         
-        # Route to appropriate module
-        if module_id == 'sine1' and param == 'freq':
-            self.modules['sine1'].freq = float(value)
-            
-        elif module_id == 'adsr1':
-            if param == 'attack':
-                self.modules['adsr1'].attack = float(value)
-            elif param == 'decay':
-                self.modules['adsr1'].decay = float(value)
-            elif param == 'sustain':
-                self.modules['adsr1'].sustain = float(value)
-            elif param == 'release':
-                self.modules['adsr1'].release = float(value)
+        if self.verbose:
+            print(f"[OSC] Set {module_id}.{param} = {value}")
+        
+        # Route voice parameters
+        if module_id.startswith('voice'):
+            if module_id in self.voices:
+                voice = self.voices[module_id]
                 
+                if param == 'freq':
+                    voice.set_freq(value)
+                elif param == 'amp':
+                    voice.set_amp(value)
+                elif param == 'filter/freq':
+                    voice.set_filter_freq(value)
+                elif param == 'filter/q':
+                    voice.set_filter_q(value)
+                elif param.startswith('adsr/'):
+                    adsr_param = param.split('/')[1]
+                    voice.set_adsr(adsr_param, value)
+                elif param == 'send/reverb':
+                    voice.set_reverb_send(value)
+                elif param == 'send/delay':
+                    voice.set_delay_send(value)
+        
+        # Backward compatibility: map old names to voice1
+        elif module_id == 'sine1' and param == 'freq':
+            self.voices['voice1'].set_freq(value)
         elif module_id == 'filter1':
             if param == 'freq':
-                self.modules['filter1'].freq = float(value)
+                self.voices['voice1'].set_filter_freq(value)
             elif param == 'q':
-                self.modules['filter1'].q = float(value)
+                self.voices['voice1'].set_filter_q(value)
+        elif module_id == 'adsr1':
+            if param in ['attack', 'decay', 'sustain', 'release']:
+                self.voices['voice1'].set_adsr(param, value)
+        
+        # Route effect parameters
+        elif module_id == 'reverb1':
+            if param == 'mix':
+                self.reverb.set_mix(value)
+            elif param == 'room':
+                self.reverb.set_room(value)
+            elif param == 'damp':
+                self.reverb.set_damp(value)
+        
+        elif module_id == 'delay1':
+            if param == 'time':
+                self.delay.set_time(value)
+            elif param == 'feedback':
+                self.delay.set_feedback(value)
+            elif param == 'mix':
+                self.delay.set_mix(value)
+            elif param == 'lowcut':
+                self.delay.set_lowcut(value)
+            elif param == 'highcut':
+                self.delay.set_highcut(value)
     
     def handle_gate(self, addr, *args):
         """Handle /gate/<module_id> value"""
@@ -166,14 +227,17 @@ class PyoEngine:
         module_id = parts[2]
         gate = args[0]
         
-        print(f"[OSC] Gate {module_id} = {gate}")
+        if self.verbose:
+            print(f"[OSC] Gate {module_id} = {gate}")
         
-        # For now, gate controls ADSR
-        if module_id == 'adsr1' or module_id == '1':
-            if gate > 0:
-                self.modules['adsr1'].play()  # Trigger envelope
-            else:
-                self.modules['adsr1'].stop()  # Release envelope
+        # Route to voices
+        if module_id.startswith('voice'):
+            if module_id in self.voices:
+                self.voices[module_id].gate(gate)
+        
+        # Backward compatibility: map old names to voice1
+        elif module_id == 'adsr1' or module_id == '1':
+            self.voices['voice1'].gate(gate)
     
     def handle_unknown(self, addr, *args):
         """Debug handler for unmatched OSC messages"""
@@ -198,10 +262,47 @@ class PyoEngine:
         print(f"Sample rate: {self.server.getSamplingRate()}Hz")
         print(f"Buffer size: {self.server.getBufferSize()}")
         print(f"Output latency: {self.server.getBufferSize()/self.server.getSamplingRate()*1000:.1f}ms")
-        print(f"CPU usage: Not available in pyo")
-        print("\nModules:")
-        for name, module in self.modules.items():
-            print(f"  {name}: {type(module).__name__}")
+        print("\nVoices (4):")
+        for voice_id in self.voices:
+            print(f"  {voice_id}: ready")
+        print("\nEffects:")
+        print(f"  reverb1: mix={self.reverb.get_status()['mix']:.2f}")
+        print(f"  delay1: time={self.delay.get_status()['time']:.2f}s")
+        print("="*50 + "\n")
+    
+    def list_modules(self):
+        """List available modules and parameters"""
+        print("\n" + "="*50)
+        print("AVAILABLE MODULES")
+        print("="*50)
+        
+        print("\nVoices (voice1-4):") 
+        print("  /mod/voiceN/freq <20-5000>")
+        print("  /mod/voiceN/amp <0-1>")
+        print("  /mod/voiceN/filter/freq <50-8000>")
+        print("  /mod/voiceN/filter/q <0.5-10>")
+        print("  /mod/voiceN/adsr/attack <0.001-2>")
+        print("  /mod/voiceN/adsr/decay <0-2>")
+        print("  /mod/voiceN/adsr/sustain <0-1>")
+        print("  /mod/voiceN/adsr/release <0.01-3>")
+        print("  /mod/voiceN/send/reverb <0-1>")
+        print("  /mod/voiceN/send/delay <0-1>")
+        print("  /gate/voiceN <0|1>")
+        
+        print("\nEffects:")
+        print("  /mod/reverb1/mix <0-1>")
+        print("  /mod/reverb1/room <0-1>")
+        print("  /mod/reverb1/damp <0-1>")
+        print("  /mod/delay1/time <0.1-0.6>")
+        print("  /mod/delay1/feedback <0-0.7>")
+        print("  /mod/delay1/mix <0-1>")
+        
+        print("\nBackward Compatibility (mapped to voice1):")
+        print("  /mod/sine1/freq")
+        print("  /mod/filter1/freq|q")
+        print("  /mod/adsr1/*")
+        print("  /gate/adsr1")
+        
         print("="*50 + "\n")
     
     def run_forever(self):
@@ -213,6 +314,7 @@ class PyoEngine:
         print("  /engine/start - Start audio")
         print("  /engine/stop - Stop audio")
         print("  /engine/status - Show status")
+        print("  /engine/list - List all modules")
         print("\nPress Ctrl+C to exit\n")
         
         try:
@@ -228,12 +330,8 @@ class PyoEngine:
 def main():
     """Main entry point"""
     
-    # Create engine with Windows config
-    engine = PyoEngine(
-        sample_rate=48000,
-        buffer_size=256,  # 5.3ms latency
-        device_id=17  # AB13X USB Audio
-    )
+    # Create engine with environment-aware config
+    engine = PyoEngine()
     
     # Auto-start audio
     engine.start()
