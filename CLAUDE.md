@@ -173,6 +173,23 @@ music_chronus/
 └── CLAUDE.md            # This file
 ```
 
+### File Organization Rules (CRITICAL)
+
+**NEVER place files in the project root. Use these locations:**
+
+- **Test scripts**: `/tests/manual/` for interactive tests, `/tests/` for automated tests
+- **Modules**: `/src/music_chronus/modules/` for DSP modules
+- **Documentation**: `/docs/` for technical docs, `/docs/analysis/` for investigations
+- **Session handoffs**: `/project/handoffs/` with date and topic
+- **Temporary work**: `/tmp/` or `/scratch/` (create if needed)
+- **Config files**: Root only for `.env`, `Makefile`, `pyproject.toml`
+
+**Before creating ANY file:**
+1. Check if a similar file exists to understand the pattern
+2. Look for the appropriate subdirectory
+3. Never default to root directory
+4. When in doubt, ask "Where do similar files live?"
+
 ## 🚀 Current Sprint Status
 
 **Phase 2: COMPLETE ✅ (2025-09-01)**

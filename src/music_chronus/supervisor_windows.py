@@ -20,8 +20,15 @@ from pythonosc.osc_server import ThreadingOSCUDPServer
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Windows configuration
+# Windows configuration - MUST BE FIRST to set env vars
 from music_chronus.config_windows import apply_windows_config, get_config
+
+# Apply config BEFORE importing AudioRing so it gets correct BUFFER_SIZE
+apply_windows_config()
+config = get_config()
+
+# Set env var explicitly before AudioRing import
+os.environ['CHRONUS_BUFFER_SIZE'] = str(config['buffer_size'])
 
 # Import core components (these are cross-platform)
 try:
@@ -31,7 +38,7 @@ try:
     )
     from music_chronus.module_host import ModuleHost, pack_command_v2, CMD_OP_SET, CMD_OP_GATE, CMD_TYPE_FLOAT, CMD_TYPE_BOOL
     from music_chronus.modules.simple_sine import SimpleSine
-    from music_chronus.modules.adsr import ADSR
+    from music_chronus.modules.adsr_rc import ADSR_RC as ADSR
     from music_chronus.modules.biquad_filter import BiquadFilter
 except ImportError:
     # Fallback for different import contexts
@@ -43,13 +50,10 @@ except ImportError:
     )
     from music_chronus.module_host import ModuleHost, pack_command_v2, CMD_OP_SET, CMD_OP_GATE, CMD_TYPE_FLOAT, CMD_TYPE_BOOL
     from music_chronus.modules.simple_sine import SimpleSine
-    from music_chronus.modules.adsr import ADSR
+    from music_chronus.modules.adsr_rc import ADSR_RC as ADSR
     from music_chronus.modules.biquad_filter import BiquadFilter
 
-# Apply Windows configuration
-apply_windows_config()
-config = get_config()
-
+# Config already loaded at top of file
 # Use config values
 SAMPLE_RATE = config['sample_rate']
 BUFFER_SIZE = config['buffer_size']
@@ -287,6 +291,13 @@ class WindowsAudioSupervisor:
             except:
                 pass
         
+        # Prefill buffers before starting stream (Senior Dev recommendation)
+        prefill_count = int(os.environ.get('CHRONUS_PREFILL_BUFFERS', '4'))
+        if prefill_count > 0:
+            print(f"Prefilling {prefill_count} buffers...")
+            # Give workers time to produce initial buffers
+            time.sleep(prefill_count * self.buffer_size / self.sample_rate)
+        
         self.stream.start()
         print("Audio stream started")
     
@@ -366,16 +377,36 @@ class WindowsAudioSupervisor:
     
     def handle_mod_param(self, addr, *args):
         """Handle canonical /mod/<id>/<param> format"""
-        # Parse address: /mod/sine1/freq
+        # Parse address: /mod/sine/freq or /mod/adsr/attack
         parts = addr.split('/')
-        if len(parts) >= 4:
+        if len(parts) >= 4 and args:
             module_id = parts[2]
             param_id = parts[3]
-            if args:
-                value = args[0]
-                # Route to appropriate handler based on param
-                # This would be expanded with full module registry
-                pass
+            value = float(args[0])
+            
+            # Special handling for gate
+            if param_id == 'gate':
+                cmd = pack_command_v2(
+                    CMD_OP_GATE,
+                    CMD_TYPE_BOOL,
+                    module_id,
+                    'gate',
+                    value
+                )
+            else:
+                # Regular parameter
+                cmd = pack_command_v2(
+                    CMD_OP_SET,
+                    CMD_TYPE_FLOAT,
+                    module_id,
+                    param_id,
+                    value
+                )
+            
+            self.primary_command_ring.write(cmd)
+            self.standby_command_ring.write(cmd)
+            self.primary_event.set()
+            self.standby_event.set()
     
     def handle_gate_module(self, addr, *args):
         """Handle canonical /gate/<id> format"""
@@ -594,38 +625,47 @@ def worker_process_windows(slot_id, audio_ring, command_ring, heartbeat_array,
     
     while not shutdown_flag.is_set():
         try:
-            # Check for commands
-            event.wait(timeout=0.0001)
-            event.clear()
-            
-            # Drain command ring
-            while True:
-                cmd_bytes = command_ring.read()
-                if cmd_bytes is None:
-                    break
-                module_host.queue_command(cmd_bytes)
-            
-            # Process commands
-            module_host.process_commands()
-            
-            # Time to produce buffer?
+            # PRIORITY 1: Check buffer deadline FIRST!
             now = time.monotonic()
             if now >= next_buffer_time:
-                # Process audio - FIXED per Senior Dev
+                # Process audio immediately when needed
                 out_buffer = module_host.process_chain()
                 
                 # Publish to ring
                 audio_ring.write(out_buffer)
                 
-                # Update timing
-                next_buffer_time += buffer_period
+                # Check if we're behind and need catch-up
+                time_behind = now - next_buffer_time
+                if time_behind > buffer_period:
+                    # Produce extra buffers to catch up (max 2)
+                    catch_up_count = min(int(time_behind / buffer_period), 2)
+                    for _ in range(catch_up_count):
+                        out_buffer = module_host.process_chain()
+                        audio_ring.write(out_buffer)
+                
+                # Update timing - deadline-based scheduling
+                next_buffer_time = max(next_buffer_time, now) + buffer_period
                 
                 # Update heartbeat
                 sequence_num += 1
                 heartbeat_array[slot_id] = sequence_num
-                
-            # Small sleep to prevent CPU spinning
-            time.sleep(0.0001)
+            
+            # PRIORITY 2: Process commands only after buffer check
+            # Non-blocking command check
+            cmd_bytes = command_ring.read()
+            if cmd_bytes is not None:
+                module_host.queue_command(cmd_bytes)
+                # Try one more command
+                cmd_bytes = command_ring.read()
+                if cmd_bytes is not None:
+                    module_host.queue_command(cmd_bytes)
+                module_host.process_commands()
+            
+            # PRIORITY 3: Only sleep if ahead of schedule
+            time_until_next = next_buffer_time - time.monotonic()
+            if time_until_next > 0.001:  # More than 1ms to spare
+                time.sleep(0.0001)
+            # If behind schedule, loop immediately!
             
         except Exception as e:
             print(f"[WORKER {slot_id}] Error: {e}")

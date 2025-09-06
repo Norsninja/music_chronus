@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//e/TidalCyclesChronus/project/handoffs/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

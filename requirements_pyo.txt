@@ -1,0 +1,11 @@
+# Pyo-based Music Chronus requirements
+# Install with: pip install -r requirements_pyo.txt
+
+# Core audio synthesis engine (C-based DSP)
+pyo>=1.0.5
+
+# OSC control (already have this)
+python-osc>=1.8.0
+
+# Optional but recommended
+numpy>=1.24.0  # For any custom processing
