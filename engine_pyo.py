@@ -10,6 +10,9 @@ import sys
 import time
 import threading
 import json
+import shutil
+import tempfile
+from pathlib import Path
 from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Union
@@ -81,11 +84,18 @@ class SequencerManager:
         # Pyo Pattern for scheduling (will be created on start)
         self.pattern = None
         
+        # Pattern save/load support - bar-aligned loading
+        self.pending_snapshots = []  # List of (snapshot, target_bar, timeout)
+        self.pending_timeout = 10.0  # Max seconds to wait for bar alignment
+        
         print("[SEQ] SequencerManager initialized")
     
     def _tick(self):
         """Main sequencer tick - called by Pattern"""
         now = time.time()
+        
+        # Check for pending pattern loads (bar-aligned)
+        self._check_pending_snapshots()
         
         # Process gate-offs first
         with self.lock:
@@ -331,6 +341,139 @@ class SequencerManager:
         
         # Convert to frequency
         return 440.0 * (2.0 ** ((midi - 69) / 12.0))
+    
+    def snapshot(self) -> dict:
+        """
+        Capture complete sequencer state atomically.
+        No deepcopy - manually build dict with only needed fields.
+        Thread-safe with minimal lock time.
+        """
+        with self.lock:
+            # Build tracks dict without deepcopy
+            tracks_dict = {}
+            for track_id, track in self.tracks.items():
+                # Manual shallow copy of Track fields
+                tracks_dict[track_id] = {
+                    "name": track.name,
+                    "voice_id": track.voice_id,
+                    "pattern": track.pattern,
+                    "notes": list(track.notes) if track.notes else [],  # Shallow copy of list
+                    "base_freq": track.base_freq,
+                    "base_amp": track.base_amp,
+                    "filter_freq": track.filter_freq,
+                    "accent_boost": track.accent_boost,
+                    "reverb_send": track.reverb_send,
+                    "delay_send": track.delay_send,
+                    "gate_frac": track.gate_frac,
+                    "note_index": track.note_index
+                }
+            
+            # Return complete state
+            return {
+                "bpm": self.bpm,
+                "swing": self.swing,
+                "running": self.running,
+                "global_step": self.global_step,
+                "tracks": tracks_dict
+            }
+    
+    def apply_snapshot(self, snapshot: dict, immediate: bool = False):
+        """
+        Restore sequencer state from snapshot.
+        immediate=False: Queue for bar-aligned loading (default)
+        immediate=True: Apply immediately (for testing)
+        """
+        if immediate:
+            self._apply_snapshot_immediate(snapshot)
+        else:
+            with self.lock:
+                # Calculate target bar (next bar boundary)
+                target_bar = ((self.global_step // 16) + 1) * 16
+                timeout = time.time() + self.pending_timeout
+                
+                # Add to pending queue (overwrites any existing pending)
+                # Could check and warn if already pending
+                if self.pending_snapshots:
+                    print(f"[SEQ] Warning: Overwriting {len(self.pending_snapshots)} pending pattern(s)")
+                
+                self.pending_snapshots.append((snapshot, target_bar, timeout))
+                print(f"[SEQ] Pattern queued for bar {target_bar // 16} (step {target_bar})")
+    
+    def _apply_snapshot_immediate(self, snapshot: dict):
+        """
+        Internal method to apply snapshot immediately.
+        Gates off all voices first to prevent stuck notes.
+        """
+        # Gate off all voices first (prevent stuck notes)
+        for voice_id in self.engine.voices:
+            self.engine.voices[voice_id].gate(0)
+        self.engine.active_gates.clear()
+        
+        with self.lock:
+            # Clear existing tracks
+            self.tracks.clear()
+            self.gate_off_queue.clear()
+            
+            # Apply sequencer parameters
+            self.bpm = snapshot.get("bpm", 120.0)
+            self.swing = snapshot.get("swing", 0.0)
+            self.global_step = snapshot.get("global_step", 0)
+            self.running = snapshot.get("running", False)
+            
+            # Recalculate timing
+            self.seconds_per_step = (60.0 / self.bpm) / 4.0
+            
+            # Recreate tracks with type coercion
+            tracks_data = snapshot.get("tracks", {})
+            for track_id, track_dict in tracks_data.items():
+                # Type-safe Track reconstruction
+                track = Track(
+                    name=str(track_dict.get("name", track_id)),
+                    voice_id=str(track_dict.get("voice_id", "voice1")),
+                    pattern=str(track_dict.get("pattern", "." * 16)),
+                    notes=[float(n) for n in track_dict.get("notes", [])],
+                    base_freq=float(track_dict.get("base_freq", 440.0)),
+                    base_amp=float(track_dict.get("base_amp", 0.3)),
+                    filter_freq=float(track_dict.get("filter_freq", 1000.0)),
+                    accent_boost=float(track_dict.get("accent_boost", 1500.0)),
+                    reverb_send=float(track_dict.get("reverb_send", 0.0)),
+                    delay_send=float(track_dict.get("delay_send", 0.0)),
+                    gate_frac=float(track_dict.get("gate_frac", 0.5)),
+                    note_index=int(track_dict.get("note_index", 0))
+                )
+                self.tracks[track_id] = track
+            
+            print(f"[SEQ] Snapshot applied: {len(self.tracks)} tracks, BPM={self.bpm}")
+    
+    def _check_pending_snapshots(self):
+        """
+        Check for pending snapshots ready to apply.
+        Called from _tick() to ensure bar-aligned loading.
+        """
+        snapshots_to_apply = []
+        current_time = time.time()
+        
+        with self.lock:
+            remaining = []
+            
+            for snapshot, target_bar, timeout in self.pending_snapshots:
+                if self.global_step >= target_bar:
+                    # Ready to apply at bar boundary
+                    snapshots_to_apply.append(snapshot)
+                    print(f"[SEQ] Applying pattern at bar {self.global_step // 16}")
+                elif current_time > timeout:
+                    # Timeout - apply anyway
+                    snapshots_to_apply.append(snapshot)
+                    print(f"[SEQ] Pattern load timeout - applying immediately")
+                else:
+                    # Keep waiting
+                    remaining.append((snapshot, target_bar, timeout))
+            
+            self.pending_snapshots = remaining
+        
+        # Apply snapshots outside lock
+        for snapshot in snapshots_to_apply:
+            self._apply_snapshot_immediate(snapshot)
 
 class PyoEngine:
     """
@@ -486,6 +629,25 @@ class PyoEngine:
         
         # Initialize parameter registry (single source of truth)
         self.init_parameter_registry()
+        
+        # Create pattern directory structure (Windows-safe paths)
+        try:
+            pattern_dirs = [
+                Path("patterns") / "slots",
+                Path("patterns") / "backups", 
+                Path("patterns") / "library",
+                Path("patterns") / "temp"
+            ]
+            for dir_path in pattern_dirs:
+                dir_path.mkdir(parents=True, exist_ok=True)
+            if self.verbose:
+                print("[PATTERN] Directory structure verified")
+        except OSError as e:
+            print(f"[PATTERN] Warning: Could not create pattern directories: {e}")
+            # Continue anyway - will fail gracefully on first save
+        
+        # Initialize pattern I/O lock for thread safety
+        self.pattern_io_lock = threading.Lock()
         
         # Configure pyo server for Windows
         self.server = Server(
@@ -760,6 +922,18 @@ class PyoEngine:
         self.map_route("/seq/status", lambda addr, *args: print(f"[SEQ] {self.sequencer.get_status()}"),
                       meta={"args": [], "description": "Get sequencer status"})
         
+        # Pattern save/load routes
+        self.map_route("/pattern/save", self.handle_pattern_save,
+                      meta={"args": ["slot_number"], "type": "int", "min": 1, "max": 128,
+                            "description": "Save current pattern to slot 1-128"})
+        
+        self.map_route("/pattern/load", self.handle_pattern_load,
+                      meta={"args": ["slot_number", "[immediate]"], "type": "int", "min": 1, "max": 128,
+                            "description": "Load pattern from slot 1-128 (optional immediate flag)"})
+        
+        self.map_route("/pattern/list", self.handle_pattern_list,
+                      meta={"args": [], "description": "List all saved patterns"})
+        
         # Catch-all for debugging - tracks unknown routes
         self.dispatcher.set_default_handler(self.handle_unknown)
         
@@ -1005,6 +1179,54 @@ class PyoEngine:
         # TODO: Add OSC reply-to functionality when needed
         # This would require tracking the sender address and using send_message back
     
+    def handle_pattern_save(self, addr, *args):
+        """Handle pattern save with feedback"""
+        if not args:
+            print("[PATTERN] Error: No slot number provided")
+            return
+        
+        try:
+            # Robust conversion handling both int and float strings
+            slot = int(float(args[0]))
+            if self.save_pattern(slot):
+                # Success message printed by save_pattern
+                pass
+            else:
+                # Error message printed by save_pattern
+                pass
+        except (ValueError, TypeError) as e:
+            print(f"[PATTERN] Error: Invalid slot number: {args[0]}")
+    
+    def handle_pattern_load(self, addr, *args):
+        """Handle pattern load with optional immediate flag"""
+        if not args:
+            print("[PATTERN] Error: No slot number provided")
+            return
+        
+        try:
+            # Parse slot number
+            slot = int(float(args[0]))
+            
+            # Parse optional immediate flag
+            immediate = False
+            if len(args) > 1:
+                immediate_arg = str(args[1]).lower()
+                immediate = immediate_arg in ('1', 'true', 'immediate', 'now')
+            
+            if self.load_pattern(slot, immediate=immediate):
+                # Success message printed by load_pattern
+                pass
+            else:
+                # Error message printed by load_pattern
+                pass
+        except (ValueError, TypeError) as e:
+            print(f"[PATTERN] Error: Invalid arguments: {args}")
+    
+    def handle_pattern_list(self, addr, *args):
+        """Handle pattern list - returns nothing to avoid OSC errors"""
+        self.list_patterns()
+        # Don't return anything - OSC handlers should return None
+    
     def handle_unknown(self, addr, *args):
         """Debug handler for unmatched OSC messages - tracks drift"""
         self.track_unknown_route(addr)
@@ -1113,6 +1335,224 @@ class PyoEngine:
             self.stop()
             self.server.shutdown()
             self.osc_server.shutdown()
+    
+    def capture_all_states(self) -> dict:
+        """
+        Capture complete engine state: sequencer + all modules.
+        Thread-safe, no deepcopy, combines all subsystem states.
+        """
+        # Get sequencer state
+        sequencer_state = self.sequencer.snapshot()
+        
+        # Capture module states
+        module_states = {}
+        
+        # Voices
+        for voice_id, voice in self.voices.items():
+            module_states[voice_id] = voice.get_status()
+        
+        # Effects
+        module_states["reverb1"] = self.reverb.get_status()
+        module_states["delay1"] = self.delay.get_status()
+        
+        # Acid filter
+        module_states["acid1"] = self.acid1.get_status()
+        
+        # Build complete state
+        return {
+            "chronus_version": "1.0.0",
+            "schema_version": "1.0",
+            "timestamp": time.time(),
+            "sequencer": sequencer_state,
+            "modules": module_states
+        }
+    
+    def restore_all_states(self, data: dict, immediate: bool = False):
+        """
+        Restore complete engine state from saved data.
+        Applies in correct order: sequencer -> voices -> effects -> acid.
+        """
+        # Validate schema version
+        schema_version = data.get("schema_version", "1.0")
+        if schema_version != "1.0":
+            print(f"[PATTERN] Warning: Schema version mismatch ({schema_version} != 1.0)")
+        
+        # Restore sequencer state
+        sequencer_data = data.get("sequencer", {})
+        if sequencer_data:
+            self.sequencer.apply_snapshot(sequencer_data, immediate=immediate)
+        
+        # Restore module states in dependency order
+        module_data = data.get("modules", {})
+        
+        # Phase 1: Voice parameters (no dependencies)
+        for voice_id in ["voice1", "voice2", "voice3", "voice4"]:
+            if voice_id in module_data and voice_id in self.voices:
+                voice_state = module_data[voice_id]
+                voice = self.voices[voice_id]
+                
+                # Apply voice parameters
+                voice.set_freq(voice_state.get("freq", 440.0))
+                voice.set_amp(voice_state.get("amp", 0.3))
+                voice.set_filter_freq(voice_state.get("filter_freq", 1000.0))
+                voice.set_filter_q(voice_state.get("filter_q", 2.0))
+                voice.set_reverb_send(voice_state.get("reverb_send", 0.0))
+                voice.set_delay_send(voice_state.get("delay_send", 0.0))
+                
+                # ADSR parameters
+                adsr = voice_state.get("adsr", {})
+                voice.set_adsr("attack", adsr.get("attack", 0.01))
+                voice.set_adsr("decay", adsr.get("decay", 0.1))
+                voice.set_adsr("sustain", adsr.get("sustain", 0.7))
+                voice.set_adsr("release", adsr.get("release", 0.5))
+        
+        # Phase 2: Effects (depend on voice sends)
+        if "reverb1" in module_data:
+            reverb_state = module_data["reverb1"]
+            self.reverb.set_mix(reverb_state.get("mix", 0.3))
+            self.reverb.set_room(reverb_state.get("room", 0.5))
+            self.reverb.set_damp(reverb_state.get("damp", 0.5))
+        
+        if "delay1" in module_data:
+            delay_state = module_data["delay1"]
+            self.delay.set_time(delay_state.get("time", 0.25))
+            self.delay.set_feedback(delay_state.get("feedback", 0.4))
+            self.delay.set_mix(delay_state.get("mix", 0.3))
+            self.delay.set_lowcut(delay_state.get("lowcut", 100.0))
+            self.delay.set_highcut(delay_state.get("highcut", 5000.0))
+        
+        # Phase 3: Acid filter (depends on voice2)
+        if "acid1" in module_data:
+            acid_state = module_data["acid1"]
+            self.acid1.set_cutoff(acid_state.get("cutoff", 1500.0))
+            self.acid1.set_res(acid_state.get("res", 0.45))
+            self.acid1.set_env_amount(acid_state.get("env_amount", 2500.0))
+            self.acid1.set_decay(acid_state.get("decay", 0.25))
+            self.acid1.set_drive(acid_state.get("drive", 0.2))
+            self.acid1.set_mix(acid_state.get("mix", 1.0))
+            self.acid1.set_vol_comp(acid_state.get("vol_comp", 0.5))
+        
+        if self.verbose:
+            print(f"[PATTERN] State restored: {len(module_data)} modules")
+    
+    def save_pattern(self, slot: int) -> bool:
+        """
+        Save current pattern to numbered slot (1-128).
+        Uses atomic file operations to prevent corruption.
+        """
+        # Validate slot number
+        if not 1 <= slot <= 128:
+            print(f"[PATTERN] Error: Slot {slot} out of range (1-128)")
+            return False
+        
+        # Capture complete state with lock
+        with self.pattern_io_lock:
+            pattern_data = self.capture_all_states()
+        
+        # Prepare file paths using Path objects
+        slot_dir = Path("patterns") / "slots"
+        slot_path = slot_dir / f"slot_{slot:03d}.json"
+        
+        # Atomic write using tempfile
+        try:
+            # Create temp file in same directory for atomic rename
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                dir=slot_dir,
+                suffix='.tmp',
+                delete=False
+            ) as tmp:
+                json.dump(pattern_data, tmp, indent=2)
+                tmp_path = Path(tmp.name)
+            
+            # Backup existing if present
+            if slot_path.exists():
+                backup_dir = Path("patterns") / "backups"
+                backup_path = backup_dir / f"slot_{slot:03d}_{int(time.time())}.backup"
+                shutil.copy2(slot_path, backup_path)
+                if self.verbose:
+                    print(f"[PATTERN] Backed up existing slot {slot}")
+            
+            # Atomic replace (Windows-safe using pathlib)
+            tmp_path.replace(slot_path)
+            print(f"[PATTERN] Saved to slot {slot}")
+            return True
+            
+        except Exception as e:
+            print(f"[PATTERN] Save failed: {e}")
+            # Clean up temp file if it exists
+            if 'tmp_path' in locals():
+                tmp_path.unlink(missing_ok=True)
+            return False
+    
+    def load_pattern(self, slot: int, immediate: bool = False) -> bool:
+        """
+        Load pattern from numbered slot (1-128).
+        immediate=False: Bar-aligned loading (default)
+        immediate=True: Load immediately
+        """
+        # Validate slot number
+        if not 1 <= slot <= 128:
+            print(f"[PATTERN] Error: Slot {slot} out of range (1-128)")
+            return False
+        
+        # Prepare file paths
+        slot_path = Path("patterns") / "slots" / f"slot_{slot:03d}.json"
+        backup_path = Path("patterns") / "backups" / f"slot_{slot:03d}.backup"
+        
+        # Try to load pattern file
+        pattern_data = None
+        try:
+            with open(slot_path, 'r') as f:
+                pattern_data = json.load(f)
+                if self.verbose:
+                    print(f"[PATTERN] Loaded slot {slot}")
+        except (json.JSONDecodeError, IOError) as e:
+            # Try backup if main file fails
+            if backup_path.exists():
+                print(f"[PATTERN] Slot {slot} corrupted, trying backup")
+                try:
+                    with open(backup_path, 'r') as f:
+                        pattern_data = json.load(f)
+                        print(f"[PATTERN] Backup loaded successfully")
+                except:
+                    pass
+        
+        if pattern_data is None:
+            print(f"[PATTERN] Error: No valid pattern in slot {slot}")
+            return False
+        
+        # Apply the loaded pattern
+        try:
+            self.restore_all_states(pattern_data, immediate=immediate)
+            print(f"[PATTERN] Loaded slot {slot} {'immediately' if immediate else 'queued for bar boundary'}")
+            return True
+        except Exception as e:
+            print(f"[PATTERN] Error applying pattern: {e}")
+            return False
+    
+    def list_patterns(self) -> list:
+        """
+        List all saved pattern slots.
+        Returns list of used slot numbers for programmatic use.
+        """
+        slots_dir = Path("patterns") / "slots"
+        used_slots = []
+        
+        print("[PATTERN] Saved patterns:")
+        for slot in range(1, 129):
+            slot_path = slots_dir / f"slot_{slot:03d}.json"
+            if slot_path.exists():
+                used_slots.append(slot)
+                # Get file modification time
+                mtime = slot_path.stat().st_mtime
+                time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))
+                print(f"  Slot {slot:3d}: {time_str}")
+        
+        if not used_slots:
+            print("  (no saved patterns)")
+        
+        return used_slots
 
 
 def main():
