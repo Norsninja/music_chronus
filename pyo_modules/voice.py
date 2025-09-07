@@ -58,6 +58,7 @@ class Voice:
         # Create waveform tables
         self.sine_table = HarmTable([1], size=8192)  # Pure sine
         self.saw_table = SawTable(order=12, size=8192).normalize()  # Band-limited saw
+        self.square_table = SquareTable(order=10, size=8192).normalize()  # Band-limited square
         
         # Create oscillators for each waveform (all running simultaneously)
         self.osc_sine = Osc(
@@ -72,12 +73,18 @@ class Voice:
             mul=self.adsr
         )
         
-        # Waveform selector control (0=sine, 1=saw)
+        self.osc_square = Osc(
+            table=self.square_table,
+            freq=self.freq,
+            mul=self.adsr
+        )
+        
+        # Waveform selector control (0=sine, 1=saw, 2=square)
         self.waveform_select = Sig(0)
         
         # Selector with equal-power crossfade for click-free switching
         self.osc = Selector(
-            [self.osc_sine, self.osc_saw],
+            [self.osc_sine, self.osc_saw, self.osc_square],
             voice=self.waveform_select
         )
         self.osc.setMode(1)  # Mode 1 = equal-power crossfade
@@ -183,10 +190,10 @@ class Voice:
         """Set oscillator waveform type
         
         Args:
-            waveform: 0=sine, 1=saw (will expand to 2=square later)
+            waveform: 0=sine, 1=saw, 2=square
         """
         waveform = int(waveform)
-        if waveform < 0 or waveform > 1:
+        if waveform < 0 or waveform > 2:
             print(f"[VOICE] Warning: Invalid waveform {waveform}, using 0 (sine)")
             waveform = 0
         self.waveform_select.value = waveform
@@ -217,7 +224,7 @@ class Voice:
             "params": {
                 "freq": {"type": "float", "min": 20, "max": 5000, "default": 440.0, "smoothing_ms": 20, "unit": "Hz"},
                 "amp": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20},
-                "osc/type": {"type": "int", "min": 0, "max": 1, "default": 0, "notes": "0=sine, 1=saw"},
+                "osc/type": {"type": "int", "min": 0, "max": 2, "default": 0, "notes": "0=sine, 1=saw, 2=square"},
                 "filter/freq": {"type": "float", "min": 50, "max": 8000, "default": 1000.0, "smoothing_ms": 20, "unit": "Hz"},
                 "filter/q": {"type": "float", "min": 0.5, "max": 10, "default": 2.0, "smoothing_ms": 20},
                 "adsr/attack": {"type": "float", "min": 0.001, "max": 2, "default": 0.01, "unit": "seconds"},
@@ -228,5 +235,5 @@ class Voice:
                 "send/delay": {"type": "float", "min": 0, "max": 1, "default": 0.0}
             },
             "gates": ["gate"],
-            "notes": "Polyphonic voice with Osc(Sine/Saw) -> ADSR -> Biquad filter chain"
+            "notes": "Polyphonic voice with Osc(Sine/Saw/Square) -> ADSR -> Biquad filter chain"
         }
