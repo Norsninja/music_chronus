@@ -1,44 +1,65 @@
-# Sprint: Musical Exploration with Pyo
+# Sprint: Audio Module Expansion 🎛️
 
-## Current State: Foundation Complete ✅
+## Current State: Pattern System Complete ✅
 
-After 45+ sessions, we've reached clarity:
-- **Problem solved**: Use pyo's C engine for DSP (not Python)
-- **Architecture simplified**: 500 lines instead of 5000
-- **Performance achieved**: 5.3ms latency, zero clicks
-- **Focus restored**: Music creation, not infrastructure
+After successful pattern save/load implementation:
+- **Pattern management**: 128 slots with atomic save/load
+- **Sequencer integration**: Bar-aligned loading, self-maintaining registry
+- **Performance**: 15ms save, 25ms load, zero dropouts
+- **Architecture proven**: Pyo engine with 5.3ms latency
 
 ## What We Have Now
 
 ### Working Components
 - ✅ **engine_pyo.py** - Headless synthesizer with OSC control
-- ✅ **Pattern sequencer** - Our `X.x.` notation works perfectly
-- ✅ **OSC schema** - `/mod/<id>/<param>`, `/gate/<id>`
-- ✅ **Examples** - Test scripts showing everything works
+- ✅ **Pattern save/load** - Complete with atomic operations
+- ✅ **Integrated sequencer** - Pattern-based with bar alignment
+- ✅ **Self-maintaining schema** - Auto-updates with map_route()
+- ✅ **4-voice polyphony** - With effects sends
+- ✅ **Acid filter** - TB-303 style on voice2
 
-### Preserved Knowledge
-- **project/** - Full documentation of our journey
-- **CLAUDE.md** - AI identity and collaboration model
-- **AGENTS.md** - Team structure
-- **DSP modules** - acid_filter.py, distortion.py (to port)
+### Ready for Enhancement
+- **Voice module** - Has stubs for slide/waveforms
+- **OSC routing** - Extensible for new parameters
+- **Effects chain** - Ready for distortion insert
 
-## Next Phase: Musical Creation 🎵
+## Current Sprint: Audio Module Implementation 🎛️
 
-### Immediate Goals (This Session - 2025-09-06)
+### Week 1 Tasks (2025-01-07 - 2025-01-11)
 
-#### 1. Authentic 303 Implementation (Based on Senior Dev Review)
-- [x] Acid filter ported to pyo with MoogLP (working but needs refinement)
-- [ ] **Priority 1: Slide/Portamento** - Port with numeric time updates, legato behavior
-- [ ] **Priority 2: Band-limited Oscillators** - Osc with SawTable/SquareTable 
-- [ ] **Priority 3: Pre-filter Tap** - Feed acid from raw oscillator signal
-- [ ] **Priority 4: Brighter Defaults** - Cutoff 1500Hz, env_amount 2500Hz
-- [ ] **Priority 5: Sequencer Slide Pattern** - Support "-" for tied notes
+#### Day 1-2: Oscillator Types ⚡ CURRENT
+- [ ] **Implement Saw/Square waveforms** - Using Selector pattern
+- [ ] **Add OSC routes** - `/mod/voiceN/osc/type <0|1|2>`
+- [ ] **Test click-free switching** - Verify crossfade works
+- [ ] **Update schema registry** - Add new parameters
+- [ ] **Demo: Bass comparison** - A/B test waveforms
 
-#### 2. Technical Corrections (Critical)
-- [ ] Fix Port parameter types (numeric only, not Sig/SigTo)
-- [ ] Implement selective slide (only on tied notes, not all frequency changes)
-- [ ] Add get_prefilter_signal() to Voice class
-- [ ] Update engine routing to use pre-filter signal for acid
+#### Day 3-4: Distortion Module
+- [ ] **Create DistortionModule class** - Using pyo Disto
+- [ ] **Insert in signal chain** - After mixer, before effects
+- [ ] **Add OSC routes** - `/mod/dist1/drive|mix|tone`
+- [ ] **Test CPU impact** - Monitor with all voices
+- [ ] **Demo: Techno/Industrial** - Subtle to aggressive
+
+#### Day 5: Testing & Integration
+- [ ] **Combined tests** - Saw + Distortion = Lead
+- [ ] **Pattern compatibility** - Verify save/load works
+- [ ] **Performance metrics** - CPU and latency
+- [ ] **Create demo patterns** - Save to slots
+
+### Week 2 Tasks (2025-01-13 - 2025-01-17)
+
+#### Day 1-2: LFO Modules
+- [ ] **Implement LFO1 → Voice2 filter** - Wobble bass
+- [ ] **Implement LFO2 → Voice3 amp** - Tremolo
+- [ ] **Add OSC routes** - `/mod/lfo1/rate|depth|shape`
+- [ ] **Test modulation smoothness** - No zipper noise
+
+#### Day 3-4: Slide/Glide
+- [ ] **Implement Port in voices** - Dual-path architecture
+- [ ] **Add slide_time control** - Per-voice setting
+- [ ] **Sequencer integration** - Legato note support
+- [ ] **Demo: 303 acid slides** - Authentic behavior
 
 ### Completed (2025-09-06)
 
@@ -131,6 +152,7 @@ Start the engine, create a beat, add a bassline, apply effects. If we're not mak
 
 ---
 
-*Updated: 2024-12-18*
-*Status: Foundation complete, ready for music*
-*Next: Create, perform, collaborate*
+*Updated: 2025-01-07*
+*Status: Audio module expansion sprint*
+*Next: Oscillator types implementation*
+*Plan: project/docs/audio_modules_implementation_plan.md*

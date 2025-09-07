@@ -10,7 +10,7 @@ from pyo import *
 class Voice:
     """
     Single synthesizer voice with parameter smoothing
-    Chain: Sine -> ADSR -> Biquad filter
+    Chain: Osc(Sine/Saw) -> ADSR -> Biquad filter
     """
     
     def __init__(self, voice_id, server=None):
@@ -55,11 +55,32 @@ class Voice:
         # Make envelope exponential for more natural sound
         self.adsr.setExp(0.75)
         
-        # Sine oscillator with smoothed frequency, modulated by envelope
-        self.osc = Sine(
+        # Create waveform tables
+        self.sine_table = HarmTable([1], size=8192)  # Pure sine
+        self.saw_table = SawTable(order=12, size=8192).normalize()  # Band-limited saw
+        
+        # Create oscillators for each waveform (all running simultaneously)
+        self.osc_sine = Osc(
+            table=self.sine_table,
             freq=self.freq,
             mul=self.adsr
         )
+        
+        self.osc_saw = Osc(
+            table=self.saw_table,
+            freq=self.freq,
+            mul=self.adsr
+        )
+        
+        # Waveform selector control (0=sine, 1=saw)
+        self.waveform_select = Sig(0)
+        
+        # Selector with equal-power crossfade for click-free switching
+        self.osc = Selector(
+            [self.osc_sine, self.osc_saw],
+            voice=self.waveform_select
+        )
+        self.osc.setMode(1)  # Mode 1 = equal-power crossfade
         
         # Store pre-filter signal for acid input
         # This is the oscillator output before filtering
@@ -159,8 +180,16 @@ class Voice:
         pass
     
     def set_waveform(self, waveform):
-        """Stub - waveform switching not implemented in simple version"""
-        pass
+        """Set oscillator waveform type
+        
+        Args:
+            waveform: 0=sine, 1=saw (will expand to 2=square later)
+        """
+        waveform = int(waveform)
+        if waveform < 0 or waveform > 1:
+            print(f"[VOICE] Warning: Invalid waveform {waveform}, using 0 (sine)")
+            waveform = 0
+        self.waveform_select.value = waveform
     
     def get_status(self):
         """Get current voice status"""
@@ -188,6 +217,7 @@ class Voice:
             "params": {
                 "freq": {"type": "float", "min": 20, "max": 5000, "default": 440.0, "smoothing_ms": 20, "unit": "Hz"},
                 "amp": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20},
+                "osc/type": {"type": "int", "min": 0, "max": 1, "default": 0, "notes": "0=sine, 1=saw"},
                 "filter/freq": {"type": "float", "min": 50, "max": 8000, "default": 1000.0, "smoothing_ms": 20, "unit": "Hz"},
                 "filter/q": {"type": "float", "min": 0.5, "max": 10, "default": 2.0, "smoothing_ms": 20},
                 "adsr/attack": {"type": "float", "min": 0.001, "max": 2, "default": 0.01, "unit": "seconds"},
@@ -198,5 +228,5 @@ class Voice:
                 "send/delay": {"type": "float", "min": 0, "max": 1, "default": 0.0}
             },
             "gates": ["gate"],
-            "notes": "Polyphonic voice with Sine -> ADSR -> Biquad filter chain"
+            "notes": "Polyphonic voice with Osc(Sine/Saw) -> ADSR -> Biquad filter chain"
         }
