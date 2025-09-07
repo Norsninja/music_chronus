@@ -35,6 +35,18 @@ class Voice:
         self.amp_sig = Sig(0.3)  # Target amplitude (0-1)
         self.amp = SigTo(self.amp_sig, time=self.smooth_time)  # Smoothed amplitude
         
+        # Slide/Portamento control (0-1.5 seconds)
+        self.slide_time_sig = Sig(0.0)  # 0 = no portamento
+        self.slide_time = SigTo(self.slide_time_sig, time=0.005)  # Quick update for slide changes
+        
+        # Create ported frequency signal for smooth glides
+        # Port provides exponential smoothing which sounds more musical than linear
+        self.ported_freq = Port(
+            self.freq,  # Input from SigTo smoothed freq
+            risetime=self.slide_time,  # Time to rise to higher frequency
+            falltime=self.slide_time   # Time to fall to lower frequency
+        )
+        
         # Filter parameters with smoothing
         self.filter_freq_sig = Sig(1000.0)  # Target filter frequency
         self.filter_freq = SigTo(self.filter_freq_sig, time=self.smooth_time)
@@ -61,21 +73,22 @@ class Voice:
         self.square_table = SquareTable(order=10, size=8192).normalize()  # Band-limited square
         
         # Create oscillators for each waveform (all running simultaneously)
+        # Now using ported_freq for smooth portamento/glide
         self.osc_sine = Osc(
             table=self.sine_table,
-            freq=self.freq,
+            freq=self.ported_freq,  # Use ported frequency for glide
             mul=self.adsr
         )
         
         self.osc_saw = Osc(
             table=self.saw_table,
-            freq=self.freq,
+            freq=self.ported_freq,  # Use ported frequency for glide
             mul=self.adsr
         )
         
         self.osc_square = Osc(
             table=self.square_table,
-            freq=self.freq,
+            freq=self.ported_freq,  # Use ported frequency for glide
             mul=self.adsr
         )
         
@@ -221,10 +234,17 @@ class Voice:
         
         print(f"[VOICE] {self.voice_id} amplitude LFO applied")
 
-    # Stub methods for new features (disabled for now)
     def set_slide_time(self, time):
-        """Stub - slide not implemented in simple version"""
-        pass
+        """Set portamento/slide time in seconds (0-1.5s)
+        
+        0: No portamento (instant frequency changes)
+        0.05-0.2: Fast slides (good for subtle glides)
+        0.2-0.5: Medium slides (classic synth portamento)
+        0.5-1.5: Slow slides (dramatic pitch sweeps)
+        """
+        time = max(0.0, min(1.5, float(time)))
+        self.slide_time_sig.value = time
+        print(f"[VOICE] {self.voice_id} slide_time set to {time:.3f}s")
     
     def set_waveform(self, waveform):
         """Set oscillator waveform type
@@ -253,7 +273,9 @@ class Voice:
                 'decay': self.adsr.decay,
                 'sustain': self.adsr.sustain,
                 'release': self.adsr.release
-            }
+            },
+            'waveform': int(self.waveform_select.value),
+            'slide_time': self.slide_time_sig.value
         }
     
     def get_schema(self):
@@ -272,7 +294,8 @@ class Voice:
                 "adsr/sustain": {"type": "float", "min": 0, "max": 1, "default": 0.7},
                 "adsr/release": {"type": "float", "min": 0.01, "max": 3, "default": 0.5, "unit": "seconds"},
                 "send/reverb": {"type": "float", "min": 0, "max": 1, "default": 0.0},
-                "send/delay": {"type": "float", "min": 0, "max": 1, "default": 0.0}
+                "send/delay": {"type": "float", "min": 0, "max": 1, "default": 0.0},
+                "slide_time": {"type": "float", "min": 0, "max": 1.5, "default": 0.0, "smoothing_ms": 5, "unit": "seconds", "notes": "Portamento/glide time"}
             },
             "gates": ["gate"],
             "notes": "Polyphonic voice with Osc(Sine/Saw/Square) -> ADSR -> Biquad filter chain"
