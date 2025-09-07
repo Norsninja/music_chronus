@@ -181,6 +181,46 @@ class Voice:
         """Get pre-filter signal (oscillator * ADSR) for acid input"""
         return self.prefilter_signal
     
+    # LFO integration methods (Senior Dev fix pattern)
+    def apply_filter_lfo(self, lfo_signal):
+        """Apply LFO modulation to filter cutoff frequency
+        
+        Args:
+            lfo_signal: PyoObject outputting scaled Hz offset (e.g., ±800Hz)
+        """
+        # Store reference to prevent GC
+        self._filter_lfo = lfo_signal
+        
+        # Create new total frequency with clamping
+        # Use self.filter_freq (the SigTo smoothed base) + LFO
+        self._filter_freq_total = Clip(
+            self.filter_freq + self._filter_lfo, 
+            50, 8000  # Safe frequency range
+        )
+        
+        # Rebind the filter frequency to include LFO
+        self.filter.freq = self._filter_freq_total
+        
+        print(f"[VOICE] {self.voice_id} filter LFO applied")
+    
+    def apply_amp_lfo(self, lfo_signal):
+        """Apply LFO modulation to amplitude (tremolo effect)
+        
+        Args:
+            lfo_signal: PyoObject outputting amplitude multiplier (e.g., 0.2-1.0)
+        """
+        # Store reference to prevent GC
+        self._amp_lfo = lfo_signal
+        
+        # Create new total amplitude 
+        # Use self.amp (the SigTo smoothed base) * LFO
+        self._amp_total = self.amp * self._amp_lfo
+        
+        # Rebind the ADSR multiplier to include tremolo
+        self.adsr.mul = self._amp_total
+        
+        print(f"[VOICE] {self.voice_id} amplitude LFO applied")
+
     # Stub methods for new features (disabled for now)
     def set_slide_time(self, time):
         """Stub - slide not implemented in simple version"""

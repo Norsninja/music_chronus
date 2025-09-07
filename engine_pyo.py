@@ -23,6 +23,7 @@ from pythonosc import dispatcher, osc_server
 from pyo_modules import Voice, ReverbBus, DelayBus
 from pyo_modules.acid_working import AcidFilter  # WORKING: Final version without accent
 from pyo_modules.distortion import DistortionModule  # Master insert distortion
+from pyo_modules.simple_lfo import SimpleLFOModule  # Pattern-compliant LFO module
 
 
 @dataclass
@@ -562,6 +563,28 @@ class PyoEngine:
                         "highcut": {"type": "float", "min": 1000, "max": 10000, "default": 5000, "unit": "Hz"}
                     },
                     "notes": "Global delay bus with filtering"
+                },
+                
+                # LFO modules (research-optimized modulation sources)
+                "lfo1": {
+                    "params": {
+                        "rate": {"type": "float", "min": 0.01, "max": 10.0, "default": 0.25, "smoothing_ms": 20, "unit": "Hz", "notes": "0.1-0.5: wobble, 2-8: tremolo, 4-7: vibrato"},
+                        "depth": {"type": "float", "min": 0, "max": 1, "default": 0.7, "smoothing_ms": 20, "notes": "Modulation amount: 0=none, 1=full"},
+                        "shape": {"type": "int", "min": 0, "max": 7, "default": 2, "notes": "0=saw↑, 1=saw↓, 2=square, 3=triangle, 4=pulse, 5=bipolar, 6=S&H, 7=mod_sine"},
+                        "offset": {"type": "float", "min": -1, "max": 1, "default": 0.0, "smoothing_ms": 20, "notes": "DC offset for centering modulation"}
+                    },
+                    "routing": "voice2 filter cutoff (wobble bass)",
+                    "notes": "Complex waveform LFO for wobble bass effects"
+                },
+                
+                "lfo2": {
+                    "params": {
+                        "rate": {"type": "float", "min": 0.01, "max": 10.0, "default": 4.0, "smoothing_ms": 20, "unit": "Hz", "notes": "0.1-0.5: wobble, 2-8: tremolo, 4-7: vibrato"},
+                        "depth": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20, "notes": "Modulation amount: 0=none, 1=full"},
+                        "offset": {"type": "float", "min": -1, "max": 1, "default": 0.0, "smoothing_ms": 20, "notes": "DC offset for centering modulation"}
+                    },
+                    "routing": "voice3 amplitude (tremolo)",
+                    "notes": "Sine wave LFO for smooth tremolo effects"
                 }
             },
             
@@ -759,6 +782,9 @@ class PyoEngine:
         self.reverb = ReverbBus(self.reverb_input, self.server)
         self.delay = DelayBus(self.delay_input, self.server)
         
+        # Setup LFO modulation after all voices are created
+        self.setup_lfos()
+        
         # Master output: distorted dry + reverb + delay
         self.master = Mix([
             self.distorted_mix,  # Now includes distortion
@@ -775,6 +801,33 @@ class PyoEngine:
         # Create integrated sequencer
         self.sequencer = SequencerManager(self)
         print("[PYO] Integrated sequencer ready")
+    
+    def setup_lfos(self):
+        """Setup LFO modulation using proper module pattern"""
+        print("[PYO] Setting up LFO modulation...")
+        
+        # Create LFO modules following established patterns
+        self.lfo1 = SimpleLFOModule(module_id="lfo1")
+        self.lfo1.set_rate(0.25)  # Default wobble rate
+        self.lfo1.set_depth(0.7)  # Default 70% depth
+        
+        self.lfo2 = SimpleLFOModule(module_id="lfo2")
+        self.lfo2.set_rate(4.0)   # Default tremolo rate
+        self.lfo2.set_depth(0.3)  # Default 30% depth
+        
+        # Apply LFO1 to Voice2 filter (wobble bass)
+        if "voice2" in self.voices:
+            lfo1_scaled = self.lfo1.get_scaled_for_filter(hz_range=800)
+            self.voices["voice2"].apply_filter_lfo(lfo1_scaled)
+            print("[PYO] LFO1 → Voice2 filter cutoff (wobble bass)")
+        
+        # Apply LFO2 to Voice3 amplitude (tremolo)
+        if "voice3" in self.voices:
+            lfo2_scaled = self.lfo2.get_scaled_for_amp(min_amp=0.2)
+            self.voices["voice3"].apply_amp_lfo(lfo2_scaled)
+            print("[PYO] LFO2 → Voice3 amplitude (tremolo)")
+        
+        print("[PYO] LFO setup complete")
     
     def setup_monitoring(self):
         """Setup real-time audio and message monitoring"""
@@ -1052,6 +1105,27 @@ class PyoEngine:
                 self.dist1.set_mix(value)
             elif param == 'tone':
                 self.dist1.set_tone(value)
+        
+        # Route LFO parameters using proper module methods
+        elif module_id == 'lfo1':
+            if param == 'rate':
+                self.lfo1.set_rate(value)
+                if self.verbose:
+                    print(f"[OSC] LFO1 rate: {value}Hz")
+            elif param == 'depth':
+                self.lfo1.set_depth(value)
+                if self.verbose:
+                    print(f"[OSC] LFO1 depth: {value}")
+        
+        elif module_id == 'lfo2':
+            if param == 'rate':
+                self.lfo2.set_rate(value)
+                if self.verbose:
+                    print(f"[OSC] LFO2 rate: {value}Hz")
+            elif param == 'depth':
+                self.lfo2.set_depth(value)
+                if self.verbose:
+                    print(f"[OSC] LFO2 depth: {value}")
         
         # Route acid filter parameters
         elif module_id == 'acid1':
@@ -1381,6 +1455,10 @@ class PyoEngine:
         module_states["reverb1"] = self.reverb.get_status()
         module_states["delay1"] = self.delay.get_status()
         
+        # LFO modules using proper get_status() method
+        module_states["lfo1"] = self.lfo1.get_status()
+        module_states["lfo2"] = self.lfo2.get_status()
+        
         # Acid filter
         module_states["acid1"] = self.acid1.get_status()
         
@@ -1438,6 +1516,17 @@ class PyoEngine:
             self.dist1.set_drive(dist_state.get("drive", 0.0))
             self.dist1.set_mix(dist_state.get("mix", 0.0))
             self.dist1.set_tone(dist_state.get("tone", 0.5))
+        
+        # Restore LFO states using proper module methods
+        if "lfo1" in module_data:
+            lfo1_state = module_data["lfo1"]
+            self.lfo1.set_rate(lfo1_state.get("rate", 0.25))
+            self.lfo1.set_depth(lfo1_state.get("depth", 0.7))
+        
+        if "lfo2" in module_data:
+            lfo2_state = module_data["lfo2"]
+            self.lfo2.set_rate(lfo2_state.get("rate", 4.0))
+            self.lfo2.set_depth(lfo2_state.get("depth", 0.3))
         
         if "reverb1" in module_data:
             reverb_state = module_data["reverb1"]
