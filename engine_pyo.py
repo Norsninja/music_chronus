@@ -759,6 +759,9 @@ class PyoEngine:
         self.dist1 = DistortionModule(self.dry_mix, module_id="dist1")
         self.distorted_mix = self.dist1.output
         
+        # Register distortion module schema
+        self.register_module_schema("dist1", self.dist1.get_schema())
+        
         # Build reverb sends from individual voices (pre-distortion)
         # This allows clean reverb tails even with heavy distortion
         reverb_sends = []
@@ -826,6 +829,10 @@ class PyoEngine:
             lfo2_scaled = self.lfo2.get_scaled_for_amp(min_amp=0.2)
             self.voices["voice3"].apply_amp_lfo(lfo2_scaled)
             print("[PYO] LFO2 → Voice3 amplitude (tremolo)")
+        
+        # Register LFO modules in the schema registry
+        self.register_module_schema("lfo1", self.lfo1.get_schema())
+        self.register_module_schema("lfo2", self.lfo2.get_schema())
         
         print("[PYO] LFO setup complete")
     
@@ -914,6 +921,22 @@ class PyoEngine:
                 
                 # Update parameter metadata
                 self.registry["modules"][module_id]["params"][param] = meta
+    
+    def register_module_schema(self, module_id, schema):
+        """Register a module's schema in the registry dynamically
+        
+        Args:
+            module_id: Module identifier (e.g., "lfo1", "dist1")
+            schema: Schema dict from module's get_schema() method
+        """
+        if module_id not in self.registry["modules"]:
+            self.registry["modules"][module_id] = {}
+        
+        # Update with the module's schema
+        self.registry["modules"][module_id] = schema
+        
+        if self.verbose:
+            print(f"[REGISTRY] Registered module schema: {module_id}")
     
     def track_unknown_route(self, addr):
         """Track routes that were called but not registered"""
