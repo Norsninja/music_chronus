@@ -54,7 +54,8 @@ music_chronus/
 The AI (Chronus Nexus) has created its first autonomous musical compositions:
 
 ### Progressive House (January 7, 2025)
-**File**: `recordings/progressive_house_layered.wav`
+**File**: `recordings/progressive_house_layered.wav`  
+**Video**: [Watch the AI live-code this track on YouTube](https://youtu.be/u0oMbckURcc)
 
 A complete progressive house track built layer by layer using the sequencer:
 - Started with just a kick drum (4-on-the-floor pattern)
