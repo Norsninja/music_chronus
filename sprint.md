@@ -58,30 +58,62 @@ After successful pattern save/load implementation:
 - [x] **Demo: Tremolo** - LFO2 modulating voice3 amplitude (tested and audible)
 - [x] **Schema registry integration** - Dynamic registration via register_module_schema()
 
-### Week 2: Slide/Glide Implementation ⚡ CURRENT (2025-01-07)
+### Week 2: Slide/Glide Implementation ✅ COMPLETE (2025-01-07)
 
-#### Implementation Plan (Research-Backed Approach)
-- [ ] **Phase 1: Voice Module Update**
-  - Add `slide_time_sig` and `slide_time` (SigTo smoothed) parameters
-  - Insert Port object after freq SigTo: `ported_freq = Port(self.freq, risetime=slide_time, falltime=slide_time)`
-  - Update all oscillators to use `ported_freq` instead of direct `self.freq`
-  - Add `set_slide_time(time)` method with 0-1.5s clamping
+#### Slide/Portamento (Completed 2025-01-07)
+- [x] **Phase 1: Voice Module Update**
+  - Added `slide_time_sig` and `slide_time` (SigTo smoothed) parameters
+  - Inserted Port object after freq SigTo: `ported_freq = Port(self.freq, risetime=slide_time, falltime=slide_time)`
+  - Updated all oscillators to use `ported_freq` instead of direct `self.freq`
+  - Added `set_slide_time(time)` method with 0-1.5s clamping
+  
+- [x] **Phase 2: OSC Integration**
+  - Added `/mod/voiceN/slide_time` route (0-1.5 seconds)
+  - Updated schema registry with slide_time parameter
+  - Included in get_status() for pattern save/load
+  
+- [x] **Phase 3: Testing & Validation**
+  - Tested with 110→220→330 Hz frequency steps
+  - Verified smooth exponential glides (Port provides this)
+  - Confirmed no clicks or artifacts at slide boundaries
+  - Tested interaction with active LFOs - works perfectly
+  
+- [x] **Phase 4: Demo Creation**
+  - Created comprehensive test_slide.py with all modes
+  - Tested TB-303 style acid slides on voice2
+  - Documented optimal slide_time ranges in code
+
+### Week 2: Recording Implementation ⚡ CURRENT (2025-01-07)
+
+#### Research & Design (Completed)
+- [x] **Codebase pattern analysis** - Identified module patterns, OSC routes, thread safety
+- [x] **Pyo recording research** - Discovered Server.recstart()/recstop() (no Record object!)
+- [x] **State management research** - Lock-free patterns, file naming, error handling
+
+#### Implementation Plan (Server-Level Recording)
+- [ ] **Phase 1: Recording Infrastructure**
+  - Add recording state management to engine_pyo.py
+  - Implement thread-safe start_recording()/stop_recording() methods
+  - Create recordings/ directory structure
+  - Use Server.recordOptions() and recstart()/recstop()
   
 - [ ] **Phase 2: OSC Integration**
-  - Add `/mod/voiceN/slide_time` route (0-1.5 seconds)
-  - Update schema registry with slide_time parameter
-  - Include in get_status() for pattern save/load
+  - Add `/engine/record/start [filename]` route
+  - Add `/engine/record/stop` route
+  - Add `/engine/record/status` for state query
+  - Update schema registry with recording commands
   
-- [ ] **Phase 3: Testing & Validation**
-  - Test with 110→220→330 Hz frequency steps
-  - Verify smooth exponential glides (Port provides this)
-  - Confirm no clicks or artifacts at slide boundaries
-  - Test interaction with active LFOs
+- [ ] **Phase 3: File Management**
+  - Implement automatic timestamp-based naming
+  - Use atomic file operations (tempfile pattern)
+  - Add recording status to engine get_status()
+  - Prevent concurrent recording sessions
   
-- [ ] **Phase 4: Demo Creation**
-  - Create 303-style acid slide demo
-  - Test legato vs retrigger behavior
-  - Document optimal slide_time ranges for different styles
+- [ ] **Phase 4: Testing & Validation**
+  - Test recording during pattern playback
+  - Verify no audio dropouts (maintain 5.3ms latency)
+  - Test with all effects and modulations active
+  - Confirm WAV file quality and format
 
 ### Completed (2025-09-06)
 

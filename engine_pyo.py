@@ -648,7 +648,10 @@ class PyoEngine:
                 "/engine/stop": {"args": [], "description": "Stop audio processing"},
                 "/engine/status": {"args": [], "description": "Print detailed status"},
                 "/engine/list": {"args": [], "description": "List all modules (human-readable)"},
-                "/engine/schema": {"args": ["[format]"], "description": "Get full parameter schema", "formats": ["json", "stdout", "file"]}
+                "/engine/schema": {"args": ["[format]"], "description": "Get full parameter schema", "formats": ["json", "stdout", "file"]},
+                "/engine/record/start": {"args": ["[filename]"], "description": "Start recording to WAV file"},
+                "/engine/record/stop": {"args": [], "description": "Stop current recording"},
+                "/engine/record/status": {"args": [], "description": "Get recording status"}
             }
         }
     
@@ -801,6 +804,9 @@ class PyoEngine:
         # Setup monitoring after master is created
         self.setup_monitoring()
         
+        # Setup recording capability
+        self.setup_recording()
+        
         # Create integrated sequencer
         self.sequencer = SequencerManager(self)
         print("[PYO] Integrated sequencer ready")
@@ -856,6 +862,20 @@ class PyoEngine:
         
         print("[MONITOR] Status monitoring enabled")
         print("[MONITOR] Writing to engine_status.txt and engine_log.txt")
+    
+    def setup_recording(self):
+        """Initialize recording capability"""
+        # Create recordings directory if it doesn't exist
+        self.recordings_dir = Path("recordings")
+        self.recordings_dir.mkdir(exist_ok=True)
+        
+        # Recording state management
+        self.recording_active = False
+        self.recording_lock = threading.Lock()
+        self.current_recording = None
+        
+        print("[RECORDING] Recording system initialized")
+        print(f"[RECORDING] Output directory: {self.recordings_dir.absolute()}")
     
     def update_status(self):
         """Write current status to files"""
@@ -976,6 +996,16 @@ class PyoEngine:
         self.map_route("/engine/schema", self.handle_schema,
                       meta={"args": ["[format]"], "description": "Get full parameter schema", 
                             "formats": ["json", "stdout", "file"]})
+        
+        # Recording control routes
+        self.map_route("/engine/record/start", self.handle_record_start,
+                      meta={"args": ["[filename]"], "description": "Start recording to WAV file"})
+        
+        self.map_route("/engine/record/stop", self.handle_record_stop,
+                      meta={"args": [], "description": "Stop current recording"})
+        
+        self.map_route("/engine/record/status", self.handle_record_status,
+                      meta={"args": [], "description": "Get recording status"})
         
         # Sequencer control routes with full metadata
         self.map_route("/seq/add", self.handle_seq_add,
@@ -1301,6 +1331,31 @@ class PyoEngine:
         # TODO: Add OSC reply-to functionality when needed
         # This would require tracking the sender address and using send_message back
     
+    def handle_record_start(self, addr, *args):
+        """Handle /engine/record/start [filename]"""
+        filename = args[0] if args else None
+        success = self.start_recording(filename)
+        if not success:
+            print("[OSC] Recording already in progress")
+    
+    def handle_record_stop(self, addr, *args):
+        """Handle /engine/record/stop"""
+        recorded_file = self.stop_recording()
+        if recorded_file:
+            print(f"[OSC] Recording saved to: {recorded_file}")
+    
+    def handle_record_status(self, addr, *args):
+        """Handle /engine/record/status"""
+        status = self.get_recording_status()
+        print("\n" + "="*50)
+        print("RECORDING STATUS")
+        print("="*50)
+        print(f"Active: {status['active']}")
+        if status['current_file']:
+            print(f"Current file: {status['current_file']}")
+        print(f"Output directory: {status['recordings_dir']}")
+        print("="*50 + "\n")
+    
     def handle_pattern_save(self, addr, *args):
         """Handle pattern save with feedback"""
         if not args:
@@ -1361,11 +1416,89 @@ class PyoEngine:
     
     def stop(self):
         """Stop audio processing and sequencer"""
+        # Stop any active recording
+        if hasattr(self, 'recording_active') and self.recording_active:
+            self.stop_recording()
         # Stop sequencer first
         self.sequencer.stop()
         # Then stop audio
         self.server.stop()
         print("[PYO] Audio stopped")
+    
+    def start_recording(self, filename=None):
+        """Start recording master output to file
+        
+        Args:
+            filename: Optional custom filename. If None, uses timestamp.
+        
+        Returns:
+            bool: True if recording started, False if already recording
+        """
+        with self.recording_lock:
+            if self.recording_active:
+                print("[RECORDING] Already recording!")
+                return False
+            
+            # Generate filename if not provided
+            if filename is None:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = self.recordings_dir / f"chronus_{timestamp}.wav"
+            else:
+                # Ensure it's in the recordings directory
+                filename = self.recordings_dir / Path(filename).name
+            
+            # Configure server recording options
+            self.server.recordOptions(
+                dur=-1,  # Record until stopped
+                filename=str(filename),
+                fileformat=0,  # WAV format
+                sampletype=0   # 16-bit integer
+            )
+            
+            # Start recording
+            self.server.recstart()
+            self.recording_active = True
+            self.current_recording = filename
+            
+            print(f"[RECORDING] Started recording to: {filename}")
+            self.log_event(f"RECORDING_START: {filename.name}")
+            return True
+    
+    def stop_recording(self):
+        """Stop current recording
+        
+        Returns:
+            str: Path to recorded file, or None if not recording
+        """
+        with self.recording_lock:
+            if not self.recording_active:
+                print("[RECORDING] Not currently recording")
+                return None
+            
+            # Stop recording
+            self.server.recstop()
+            self.recording_active = False
+            
+            recorded_file = self.current_recording
+            self.current_recording = None
+            
+            print(f"[RECORDING] Stopped recording: {recorded_file}")
+            self.log_event(f"RECORDING_STOP: {recorded_file.name}")
+            
+            return str(recorded_file)
+    
+    def get_recording_status(self):
+        """Get current recording status
+        
+        Returns:
+            dict: Recording status information
+        """
+        with self.recording_lock:
+            return {
+                "active": self.recording_active,
+                "current_file": str(self.current_recording) if self.current_recording else None,
+                "recordings_dir": str(self.recordings_dir.absolute())
+            }
     
     def print_status(self):
         """Print current engine status"""
