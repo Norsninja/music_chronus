@@ -24,27 +24,35 @@ After 45+ sessions, we've reached clarity:
 
 ## Next Phase: Musical Creation 🎵
 
-### Immediate Goals (This Week)
+### Immediate Goals (This Session - 2025-09-06)
 
-#### 1. Expand Pyo Modules
-- [ ] Port acid_filter to pyo
-- [ ] Port distortion to pyo
-- [ ] Add reverb module
-- [ ] Add delay/echo
-- [ ] Create modular routing
+#### 1. Authentic 303 Implementation (Based on Senior Dev Review)
+- [x] Acid filter ported to pyo with MoogLP (working but needs refinement)
+- [ ] **Priority 1: Slide/Portamento** - Port with numeric time updates, legato behavior
+- [ ] **Priority 2: Band-limited Oscillators** - Osc with SawTable/SquareTable 
+- [ ] **Priority 3: Pre-filter Tap** - Feed acid from raw oscillator signal
+- [ ] **Priority 4: Brighter Defaults** - Cutoff 1500Hz, env_amount 2500Hz
+- [ ] **Priority 5: Sequencer Slide Pattern** - Support "-" for tied notes
 
-#### 2. Improve Sequencer
-- [ ] Multi-track support (drums, bass, lead)
-- [ ] Pattern banks/switching
-- [ ] Tempo changes
-- [ ] Swing/groove
-- [ ] Save/load patterns
+#### 2. Technical Corrections (Critical)
+- [ ] Fix Port parameter types (numeric only, not Sig/SigTo)
+- [ ] Implement selective slide (only on tied notes, not all frequency changes)
+- [ ] Add get_prefilter_signal() to Voice class
+- [ ] Update engine routing to use pre-filter signal for acid
 
-#### 3. AI Musical Interface
-- [ ] Natural language → OSC mapping
-- [ ] Musical pattern generation
-- [ ] Style understanding ("make it more ambient")
-- [ ] Collaborative improvisation
+### Completed (2025-09-06)
+
+#### Polyphony Implementation ✅
+- [x] 4-voice architecture with Sig/SigTo smoothing
+- [x] Global reverb/delay with per-voice sends
+- [x] Fixed critical effects routing bug (pass Mix at init)
+- [x] Full OSC schema with backward compatibility
+
+#### Sequencer Updates ✅
+- [x] PolySequencer with swing and note conversion
+- [x] Headless operation (removed all user interaction)
+- [x] Genre presets (Techno, Ambient, Dub)
+- [x] Velocity → Filter/Amp modulation
 
 ### Medium-term Goals (Next Month)
 
@@ -93,16 +101,20 @@ The technical foundation is solved. Every session now should produce music, not 
 
 ## Current Sprint Tasks
 
-### Today
-- [ ] Test pyo engine with multi-module setup
-- [ ] Create first musical demo (not just test tones)
-- [ ] Update CLAUDE.md with new mission
+### Today (2025-09-06)
+- [x] Implement 4-voice polyphony with effects
+- [x] Fix critical effects routing bug
+- [x] Make sequencer headless
+- [x] Port acid_filter to pyo (Complete - MoogLP working)
+- [ ] Implement authentic 303 slide/portamento
+- [ ] Upgrade oscillators to band-limited waveforms
+- [ ] Fix acid input routing (pre-filter tap)
 
-### This Week  
-- [ ] Port one DSP module to pyo
-- [ ] Create pattern library (5-10 patterns)
-- [ ] Build scene transition system
-- [ ] Record a 2-minute musical piece
+### Next Session
+- [ ] Create Acid Bass demo with new modules
+- [ ] Create Dub Delay demo  
+- [ ] Create Ambient Pad demo
+- [ ] 10-minute stability test
 
 ## Key Insights
 
