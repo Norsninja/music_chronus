@@ -22,6 +22,7 @@ from pythonosc import dispatcher, osc_server
 # Import our pyo modules
 from pyo_modules import Voice, ReverbBus, DelayBus
 from pyo_modules.acid_working import AcidFilter  # WORKING: Final version without accent
+from pyo_modules.distortion import DistortionModule  # Master insert distortion
 
 
 @dataclass
@@ -531,6 +532,16 @@ class PyoEngine:
                     "notes": "TB-303 style acid filter, processes voice2 pre-filter signal"
                 },
                 
+                # Distortion module (master insert)
+                "dist1": {
+                    "params": {
+                        "drive": {"type": "float", "min": 0, "max": 1, "default": 0.0, "smoothing_ms": 20, "notes": "0-0.2: warmth, 0.2-0.5: crunch, 0.5-1.0: heavy"},
+                        "mix": {"type": "float", "min": 0, "max": 1, "default": 0.0, "smoothing_ms": 20, "notes": "Dry/wet with equal-loudness compensation"},
+                        "tone": {"type": "float", "min": 0, "max": 1, "default": 0.5, "smoothing_ms": 20, "notes": "0=dark, 0.5=neutral, 1=bright"}
+                    },
+                    "notes": "Master insert distortion using pyo Disto (4x faster than tanh)"
+                },
+                
                 # Reverb effect
                 "reverb1": {
                     "params": {
@@ -706,7 +717,7 @@ class PyoEngine:
         print("[PYO] Created 4 voices + acid1 + reverb + delay")
     
     def setup_routing(self):
-        """Setup signal routing: voices -> acid (voice2) -> effects -> output"""
+        """Setup signal routing: voices -> acid (voice2) -> distortion -> effects -> output"""
         
         # Get acid output once and store it
         acid_output = self.acid1.get_output()
@@ -721,7 +732,12 @@ class PyoEngine:
         
         self.dry_mix = Mix(dry_signals, voices=1)  # Mix to mono
         
-        # Build reverb sends, using acid output for voice2
+        # Insert distortion as master effect after mixing, before sends
+        self.dist1 = DistortionModule(self.dry_mix, module_id="dist1")
+        self.distorted_mix = self.dist1.output
+        
+        # Build reverb sends from individual voices (pre-distortion)
+        # This allows clean reverb tails even with heavy distortion
         reverb_sends = []
         reverb_sends.append(self.voices['voice1'].get_reverb_send())
         reverb_sends.append(acid_output * self.voices['voice2'].reverb_send)  # acid with voice2's send level
@@ -730,7 +746,7 @@ class PyoEngine:
         
         self.reverb_input = Mix(reverb_sends, voices=1)
         
-        # Build delay sends, using acid output for voice2
+        # Build delay sends from individual voices (pre-distortion)
         delay_sends = []
         delay_sends.append(self.voices['voice1'].get_delay_send())
         delay_sends.append(acid_output * self.voices['voice2'].delay_send)  # acid with voice2's send level
@@ -743,9 +759,9 @@ class PyoEngine:
         self.reverb = ReverbBus(self.reverb_input, self.server)
         self.delay = DelayBus(self.delay_input, self.server)
         
-        # Master output: dry + reverb + delay
+        # Master output: distorted dry + reverb + delay
         self.master = Mix([
-            self.dry_mix,
+            self.distorted_mix,  # Now includes distortion
             self.reverb.get_output(),
             self.delay.get_output()
         ], voices=1)
@@ -1027,6 +1043,15 @@ class PyoEngine:
                 self.delay.set_lowcut(value)
             elif param == 'highcut':
                 self.delay.set_highcut(value)
+        
+        # Route distortion parameters
+        elif module_id == 'dist1':
+            if param == 'drive':
+                self.dist1.set_drive(value)
+            elif param == 'mix':
+                self.dist1.set_mix(value)
+            elif param == 'tone':
+                self.dist1.set_tone(value)
         
         # Route acid filter parameters
         elif module_id == 'acid1':
@@ -1352,6 +1377,7 @@ class PyoEngine:
             module_states[voice_id] = voice.get_status()
         
         # Effects
+        module_states["dist1"] = self.dist1.get_status()
         module_states["reverb1"] = self.reverb.get_status()
         module_states["delay1"] = self.delay.get_status()
         
@@ -1407,6 +1433,12 @@ class PyoEngine:
                 voice.set_adsr("release", adsr.get("release", 0.5))
         
         # Phase 2: Effects (depend on voice sends)
+        if "dist1" in module_data:
+            dist_state = module_data["dist1"]
+            self.dist1.set_drive(dist_state.get("drive", 0.0))
+            self.dist1.set_mix(dist_state.get("mix", 0.0))
+            self.dist1.set_tone(dist_state.get("tone", 0.5))
+        
         if "reverb1" in module_data:
             reverb_state = module_data["reverb1"]
             self.reverb.set_mix(reverb_state.get("mix", 0.3))
