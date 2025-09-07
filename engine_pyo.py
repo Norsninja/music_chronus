@@ -9,18 +9,471 @@ import os
 import sys
 import time
 import threading
-from typing import Dict, Any
+import json
+from collections import deque
+from dataclasses import dataclass
+from typing import Dict, Any, List, Optional, Union
 from pyo import *
 from pythonosc import dispatcher, osc_server
 
 # Import our pyo modules
 from pyo_modules import Voice, ReverbBus, DelayBus
+from pyo_modules.acid_working import AcidFilter  # WORKING: Final version without accent
+
+
+@dataclass
+class Track:
+    """Represents a sequencer track"""
+    name: str
+    voice_id: str
+    pattern: str
+    notes: List[float] = None
+    base_freq: float = 440.0
+    base_amp: float = 0.3
+    filter_freq: float = 1000.0
+    accent_boost: float = 1500.0
+    reverb_send: float = 0.0
+    delay_send: float = 0.0
+    gate_frac: float = 0.5
+    note_index: int = 0
+    
+    def __post_init__(self):
+        if self.notes is None:
+            self.notes = []
+    
+    def get_next_freq(self) -> float:
+        """Get next frequency from note list, cycling through"""
+        if not self.notes:
+            return self.base_freq
+        freq = self.notes[self.note_index]
+        self.note_index = (self.note_index + 1) % len(self.notes)
+        return freq
+    
+    def reset_note_index(self):
+        """Reset note cycling to beginning"""
+        self.note_index = 0
+
+
+class SequencerManager:
+    """Internal sequencer driven by pyo Pattern"""
+    
+    def __init__(self, engine):
+        self.engine = engine
+        self.server = engine.server
+        
+        # Sequencer state
+        self.tracks: Dict[str, Track] = {}
+        self.bpm = 120.0
+        self.swing = 0.0
+        self.running = False
+        self.global_step = 0
+        self.epoch_start = 0.0
+        
+        # Timing
+        self.seconds_per_step = (60.0 / self.bpm) / 4.0
+        
+        # Gate-off queue: List of (voice_id, due_time) tuples
+        self.gate_off_queue: List[tuple] = []
+        
+        # Thread safety
+        self.lock = threading.Lock()
+        
+        # Pyo Pattern for scheduling (will be created on start)
+        self.pattern = None
+        
+        print("[SEQ] SequencerManager initialized")
+    
+    def _tick(self):
+        """Main sequencer tick - called by Pattern"""
+        now = time.time()
+        
+        # Process gate-offs first
+        with self.lock:
+            while self.gate_off_queue and self.gate_off_queue[0][1] <= now:
+                voice_id, _ = self.gate_off_queue.pop(0)
+                if voice_id in self.engine.voices:
+                    self.engine.voices[voice_id].gate(0)
+                    self.engine.active_gates.discard(voice_id)
+                    if self.engine.verbose:
+                        print(f"[SEQ] Gate off: {voice_id}")
+        
+        # Get current tracks snapshot
+        with self.lock:
+            if not self.running:
+                return
+            tracks_snapshot = list(self.tracks.values())
+            current_step = self.global_step
+            self.global_step += 1
+        
+        # Process each track
+        for track in tracks_snapshot:
+            # Get pattern position
+            pattern_index = current_step % len(track.pattern)
+            char = track.pattern[pattern_index]
+            
+            if char in ('X', 'x'):
+                # Calculate velocity
+                velocity = 1.0 if char == 'X' else 0.6
+                
+                # Get voice
+                if track.voice_id in self.engine.voices:
+                    voice = self.engine.voices[track.voice_id]
+                    
+                    # Get frequency
+                    freq = track.get_next_freq()
+                    
+                    # Apply parameters with velocity modulation
+                    voice.set_freq(freq)
+                    voice.set_amp(track.base_amp * velocity)
+                    
+                    # Filter modulation
+                    filter_cutoff = track.filter_freq + (track.accent_boost * (velocity - 0.5))
+                    voice.set_filter_freq(filter_cutoff)
+                    
+                    # Effects sends
+                    voice.set_reverb_send(track.reverb_send)
+                    voice.set_delay_send(track.delay_send)
+                    
+                    # Special handling for voice2/acid
+                    if track.voice_id == 'voice2' and char == 'X':
+                        # Set accent before gate (even though it's disabled, for future)
+                        if hasattr(self.engine, 'acid1'):
+                            self.engine.acid1.set_accent(1.0)
+                    
+                    # Trigger gate
+                    voice.gate(1)
+                    self.engine.active_gates.add(track.voice_id)
+                    
+                    # Schedule gate-off
+                    gate_time = self.seconds_per_step * track.gate_frac
+                    due_time = now + gate_time
+                    with self.lock:
+                        self.gate_off_queue.append((track.voice_id, due_time))
+                        self.gate_off_queue.sort(key=lambda x: x[1])
+                    
+                    # Log event
+                    self.engine.log_event(f"GATE_ON: {track.voice_id}")
+                    
+                    if self.engine.verbose:
+                        print(f"[SEQ] Step {current_step}: {track.name} -> {track.voice_id} ({freq:.0f}Hz, vel={velocity:.1f})")
+        
+        # Calculate next tick time with swing
+        step_in_bar = current_step % 16
+        if self.swing > 0 and step_in_bar % 2 == 1:
+            # Delay odd steps for swing
+            next_time = self.seconds_per_step + (self.swing * 0.5 * self.seconds_per_step)
+        else:
+            next_time = self.seconds_per_step
+        
+        # Update Pattern time for next tick
+        if self.pattern:
+            self.pattern.time = next_time
+    
+    def add_track(self, track_id: str, voice_id: str, pattern: str, **kwargs) -> bool:
+        """Add a new track"""
+        with self.lock:
+            # Parse any notes if provided
+            notes = kwargs.pop('notes', [])
+            if isinstance(notes, str):
+                notes = self._parse_notes(notes)
+            
+            track = Track(
+                name=track_id,
+                voice_id=voice_id,
+                pattern=pattern,
+                notes=notes,
+                **kwargs
+            )
+            self.tracks[track_id] = track
+            print(f"[SEQ] Added track '{track_id}' -> {voice_id} ({len(pattern)} steps)")
+            return True
+    
+    def remove_track(self, track_id: str) -> bool:
+        """Remove a track"""
+        with self.lock:
+            if track_id in self.tracks:
+                del self.tracks[track_id]
+                print(f"[SEQ] Removed track '{track_id}'")
+                return True
+            return False
+    
+    def clear(self):
+        """Clear all tracks"""
+        with self.lock:
+            self.tracks.clear()
+            self.gate_off_queue.clear()
+            print("[SEQ] Cleared all tracks")
+    
+    def start(self):
+        """Start the sequencer"""
+        with self.lock:
+            if self.running:
+                return
+            
+            self.running = True
+            self.global_step = 0
+            self.epoch_start = time.time()
+            
+            # Create Pattern with initial timing
+            self.pattern = Pattern(self._tick, time=self.seconds_per_step)
+            self.pattern.play()
+            
+            print(f"[SEQ] Started at {self.bpm} BPM")
+    
+    def stop(self):
+        """Stop the sequencer and clear all gates"""
+        with self.lock:
+            if not self.running:
+                return
+            
+            self.running = False
+            
+            # Stop pattern
+            if self.pattern:
+                self.pattern.stop()
+                self.pattern = None
+            
+            # Clear gate-off queue
+            self.gate_off_queue.clear()
+        
+        # Gate off all voices (outside lock to avoid deadlock)
+        for voice_id in self.engine.voices:
+            self.engine.voices[voice_id].gate(0)
+            self.engine.active_gates.discard(voice_id)
+        
+        print("[SEQ] Stopped")
+    
+    def set_bpm(self, bpm: float):
+        """Update BPM"""
+        with self.lock:
+            self.bpm = max(30, min(300, bpm))
+            self.seconds_per_step = (60.0 / self.bpm) / 4.0
+            print(f"[SEQ] BPM set to {self.bpm}")
+    
+    def set_swing(self, swing: float):
+        """Update swing amount (0-0.6)"""
+        with self.lock:
+            self.swing = max(0, min(0.6, swing))
+            print(f"[SEQ] Swing set to {self.swing:.1%}")
+    
+    def update_pattern(self, track_id: str, pattern: str):
+        """Update a track's pattern"""
+        with self.lock:
+            if track_id in self.tracks:
+                self.tracks[track_id].pattern = pattern
+                print(f"[SEQ] Updated pattern for '{track_id}'")
+    
+    def update_notes(self, track_id: str, notes: Union[str, List]):
+        """Update a track's note sequence"""
+        with self.lock:
+            if track_id in self.tracks:
+                if isinstance(notes, str):
+                    notes = self._parse_notes(notes)
+                self.tracks[track_id].notes = notes
+                self.tracks[track_id].reset_note_index()
+                print(f"[SEQ] Updated notes for '{track_id}'")
+    
+    def get_status(self) -> str:
+        """Get current sequencer status"""
+        with self.lock:
+            status = f"BPM: {self.bpm}, Swing: {self.swing:.1%}, "
+            status += f"Running: {self.running}, Step: {self.global_step}, "
+            status += f"Tracks: {list(self.tracks.keys())}"
+            return status
+    
+    def _parse_notes(self, notes_str: str) -> List[float]:
+        """Parse comma-separated notes (Hz, MIDI, or note names)"""
+        notes = []
+        for note in notes_str.split(','):
+            note = note.strip()
+            try:
+                # Try as float (Hz)
+                if '.' in note:
+                    notes.append(float(note))
+                # Try as MIDI note number
+                elif note.isdigit():
+                    midi = int(note)
+                    notes.append(440.0 * (2.0 ** ((midi - 69) / 12.0)))
+                # Try as note name
+                else:
+                    notes.append(self._note_to_freq(note))
+            except:
+                print(f"[SEQ] Warning: Could not parse note '{note}'")
+        return notes
+    
+    def _note_to_freq(self, note: str) -> float:
+        """Convert note name to frequency"""
+        # Simple note name parser (C4 = middle C = 261.63Hz)
+        note_map = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+        
+        # Parse note name
+        base_note = note[0].upper()
+        if base_note not in note_map:
+            return 440.0
+        
+        # Parse accidentals and octave
+        offset = 0
+        octave = 4
+        pos = 1
+        
+        if pos < len(note) and note[pos] in '#b':
+            offset = 1 if note[pos] == '#' else -1
+            pos += 1
+        
+        if pos < len(note):
+            try:
+                octave = int(note[pos:])
+            except:
+                pass
+        
+        # Calculate MIDI note number
+        midi = (octave + 1) * 12 + note_map[base_note] + offset
+        
+        # Convert to frequency
+        return 440.0 * (2.0 ** ((midi - 69) / 12.0))
 
 class PyoEngine:
     """
     Headless modular synthesizer using pyo's C backend
     Compatible with existing OSC control patterns
     """
+    
+    def init_parameter_registry(self):
+        """Initialize the parameter registry - single source of truth for all params"""
+        # Track unknown routes for drift detection
+        self.unknown_routes = set()
+        self.registered_routes = {}
+        
+        # Base registry structure
+        self.registry = {
+            "version": "1.0.0",
+            "engine": "pyo",
+            "schema_version": "1.0",
+            "modules": {
+                # Voice modules (voice1-4)
+                "voice": {
+                    "instances": ["voice1", "voice2", "voice3", "voice4"],
+                    "params": {
+                        "freq": {"type": "float", "min": 20, "max": 5000, "default": 440.0, "smoothing_ms": 20, "unit": "Hz"},
+                        "amp": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20},
+                        "filter/freq": {"type": "float", "min": 50, "max": 8000, "default": 1000.0, "smoothing_ms": 20, "unit": "Hz"},
+                        "filter/q": {"type": "float", "min": 0.5, "max": 10, "default": 2.0, "smoothing_ms": 20},
+                        "adsr/attack": {"type": "float", "min": 0.001, "max": 2, "default": 0.01, "unit": "seconds"},
+                        "adsr/decay": {"type": "float", "min": 0, "max": 2, "default": 0.1, "unit": "seconds"},
+                        "adsr/sustain": {"type": "float", "min": 0, "max": 1, "default": 0.7},
+                        "adsr/release": {"type": "float", "min": 0.01, "max": 3, "default": 0.5, "unit": "seconds"},
+                        "send/reverb": {"type": "float", "min": 0, "max": 1, "default": 0.0},
+                        "send/delay": {"type": "float", "min": 0, "max": 1, "default": 0.0}
+                    },
+                    "gates": ["gate"],
+                    "notes": "4-voice polyphonic synthesis with individual ADSR and filter"
+                },
+                
+                # Acid filter module
+                "acid1": {
+                    "params": {
+                        "cutoff": {"type": "float", "min": 80, "max": 5000, "default": 1500.0, "unit": "Hz"},
+                        "res": {"type": "float", "min": 0, "max": 0.98, "default": 0.45},
+                        "env_amount": {"type": "float", "min": 0, "max": 5000, "default": 2500.0, "unit": "Hz"},
+                        "decay": {"type": "float", "min": 0.02, "max": 1.0, "default": 0.25, "unit": "seconds"},
+                        "accent": {"type": "float", "min": 0, "max": 1, "default": 0, "notes": "Currently disabled"},
+                        "cutoff_offset": {"type": "float", "min": 0, "max": 1000, "default": 300, "unit": "Hz", "notes": "Accent boost (disabled)"},
+                        "res_accent_boost": {"type": "float", "min": 0, "max": 0.4, "default": 0.2, "notes": "Accent resonance (disabled)"},
+                        "accent_decay": {"type": "float", "min": 0.02, "max": 0.15, "default": 0.05, "unit": "seconds", "notes": "Accent decay (disabled)"},
+                        "drive": {"type": "float", "min": 0, "max": 1, "default": 0.2},
+                        "mix": {"type": "float", "min": 0, "max": 1, "default": 1.0},
+                        "vol_comp": {"type": "float", "min": 0, "max": 1, "default": 0.5}
+                    },
+                    "gates": ["gate"],
+                    "notes": "TB-303 style acid filter, processes voice2 pre-filter signal"
+                },
+                
+                # Reverb effect
+                "reverb1": {
+                    "params": {
+                        "mix": {"type": "float", "min": 0, "max": 1, "default": 0.3},
+                        "room": {"type": "float", "min": 0, "max": 1, "default": 0.5},
+                        "damp": {"type": "float", "min": 0, "max": 1, "default": 0.5}
+                    },
+                    "notes": "Global reverb bus with per-voice sends"
+                },
+                
+                # Delay effect
+                "delay1": {
+                    "params": {
+                        "time": {"type": "float", "min": 0.1, "max": 0.6, "default": 0.25, "unit": "seconds"},
+                        "feedback": {"type": "float", "min": 0, "max": 0.7, "default": 0.4, "notes": "Limited to prevent runaway"},
+                        "mix": {"type": "float", "min": 0, "max": 1, "default": 0.3},
+                        "lowcut": {"type": "float", "min": 20, "max": 1000, "default": 100, "unit": "Hz"},
+                        "highcut": {"type": "float", "min": 1000, "max": 10000, "default": 5000, "unit": "Hz"}
+                    },
+                    "notes": "Global delay bus with filtering"
+                }
+            },
+            
+            "sequencer": {
+                "commands": {
+                    "/seq/add": {
+                        "args": ["track_id", "voice_id", "pattern", "[base_freq]", "[filter_freq]", "[notes]"],
+                        "description": "Add a new track to the sequencer",
+                        "example": "/seq/add kick voice1 X...X...X...X... 60 200"
+                    },
+                    "/seq/remove": {
+                        "args": ["track_id"],
+                        "description": "Remove a track from the sequencer"
+                    },
+                    "/seq/clear": {
+                        "args": [],
+                        "description": "Clear all tracks"
+                    },
+                    "/seq/start": {
+                        "args": [],
+                        "description": "Start the sequencer"
+                    },
+                    "/seq/stop": {
+                        "args": [],
+                        "description": "Stop the sequencer and gate off all voices"
+                    },
+                    "/seq/bpm": {
+                        "args": ["bpm_value"],
+                        "range": [30, 300],
+                        "default": 120,
+                        "description": "Set sequencer BPM"
+                    },
+                    "/seq/swing": {
+                        "args": ["swing_amount"],
+                        "range": [0, 0.6],
+                        "default": 0,
+                        "description": "Set swing amount"
+                    },
+                    "/seq/update/pattern": {
+                        "args": ["track_id", "new_pattern"],
+                        "description": "Update a track's pattern"
+                    },
+                    "/seq/update/notes": {
+                        "args": ["track_id", "notes_string"],
+                        "description": "Update a track's note sequence"
+                    },
+                    "/seq/status": {
+                        "args": [],
+                        "description": "Get sequencer status"
+                    }
+                },
+                "pattern_notation": {
+                    "X": "Accent hit (velocity 1.0)",
+                    "x": "Normal hit (velocity 0.6)",
+                    ".": "Rest (no trigger)"
+                }
+            },
+            
+            "engine_commands": {
+                "/engine/start": {"args": [], "description": "Start audio processing"},
+                "/engine/stop": {"args": [], "description": "Stop audio processing"},
+                "/engine/status": {"args": [], "description": "Print detailed status"},
+                "/engine/list": {"args": [], "description": "List all modules (human-readable)"},
+                "/engine/schema": {"args": ["[format]"], "description": "Get full parameter schema", "formats": ["json", "stdout", "file"]}
+            }
+        }
     
     def __init__(self, sample_rate=None, buffer_size=None, device_id=None):
         """Initialize pyo server with environment-aware configuration"""
@@ -30,6 +483,9 @@ class PyoEngine:
         buffer_size = buffer_size or int(os.environ.get('CHRONUS_BUFFER_SIZE', 256))
         device_id = device_id if device_id is not None else int(os.environ.get('CHRONUS_DEVICE_ID', -1))
         self.verbose = os.environ.get('CHRONUS_VERBOSE', '').lower() in ('1', 'true', 'yes')
+        
+        # Initialize parameter registry (single source of truth)
+        self.init_parameter_registry()
         
         # Configure pyo server for Windows
         self.server = Server(
@@ -64,7 +520,7 @@ class PyoEngine:
         print(f"[PYO] Latency: {buffer_size/sample_rate*1000:.1f}ms")
     
     def setup_voices_and_effects(self):
-        """Create 4 voices and global effects buses"""
+        """Create 4 voices, acid filter, and global effects buses"""
         
         # Create 4 voices
         self.voices = {}
@@ -73,24 +529,52 @@ class PyoEngine:
             self.voices[voice_id] = Voice(voice_id, self.server)
             print(f"[PYO] Created {voice_id}")
         
+        # Create acid filter on voice2
+        # Use pre-filter signal (oscillator * ADSR) as per Senior Dev's guidance
+        self.acid1 = AcidFilter(
+            self.voices['voice2'].get_prefilter_signal(),  # Pre-filter tap for authentic 303
+            voice_id="acid1",
+            server=self.server
+        )
+        print("[PYO] Created acid1 filter on voice2")
+        
         # Create routing and effects with proper audio signal passing
         self.setup_routing()
         
-        print("[PYO] Created 4 voices + reverb + delay")
+        print("[PYO] Created 4 voices + acid1 + reverb + delay")
     
     def setup_routing(self):
-        """Setup signal routing: voices -> effects -> output"""
+        """Setup signal routing: voices -> acid (voice2) -> effects -> output"""
         
-        # Sum all voice dry signals
-        dry_signals = [voice.get_dry_signal() for voice in self.voices.values()]
+        # Get acid output once and store it
+        acid_output = self.acid1.get_output()
+        
+        # Build dry signals list, replacing voice2 with acid1 output
+        # Use explicit ordering to ensure consistency
+        dry_signals = []
+        dry_signals.append(self.voices['voice1'].get_dry_signal())
+        dry_signals.append(acid_output)  # voice2 replaced by acid
+        dry_signals.append(self.voices['voice3'].get_dry_signal())
+        dry_signals.append(self.voices['voice4'].get_dry_signal())
+        
         self.dry_mix = Mix(dry_signals, voices=1)  # Mix to mono
         
-        # Sum all reverb sends
-        reverb_sends = [voice.get_reverb_send() for voice in self.voices.values()]
+        # Build reverb sends, using acid output for voice2
+        reverb_sends = []
+        reverb_sends.append(self.voices['voice1'].get_reverb_send())
+        reverb_sends.append(acid_output * self.voices['voice2'].reverb_send)  # acid with voice2's send level
+        reverb_sends.append(self.voices['voice3'].get_reverb_send())
+        reverb_sends.append(self.voices['voice4'].get_reverb_send())
+        
         self.reverb_input = Mix(reverb_sends, voices=1)
         
-        # Sum all delay sends
-        delay_sends = [voice.get_delay_send() for voice in self.voices.values()]
+        # Build delay sends, using acid output for voice2
+        delay_sends = []
+        delay_sends.append(self.voices['voice1'].get_delay_send())
+        delay_sends.append(acid_output * self.voices['voice2'].delay_send)  # acid with voice2's send level
+        delay_sends.append(self.voices['voice3'].get_delay_send())
+        delay_sends.append(self.voices['voice4'].get_delay_send())
+        
         self.delay_input = Mix(delay_sends, voices=1)
         
         # Create effects with proper audio signal inputs (not Sig(0)!)
@@ -106,6 +590,105 @@ class PyoEngine:
         
         # Send to output
         self.master.out()
+        
+        # Setup monitoring after master is created
+        self.setup_monitoring()
+        
+        # Create integrated sequencer
+        self.sequencer = SequencerManager(self)
+        print("[PYO] Integrated sequencer ready")
+    
+    def setup_monitoring(self):
+        """Setup real-time audio and message monitoring"""
+        # Audio level monitoring
+        self.peak_meter = PeakAmp(self.master)
+        
+        # Statistics
+        self.msg_count = 0
+        self.last_msg = "none"
+        self.last_level = 0.0
+        self.active_gates = set()
+        
+        # Log buffer (last 100 events)
+        self.log_buffer = deque(maxlen=100)
+        
+        # Update status every 100ms
+        self.status_pattern = Pattern(self.update_status, time=0.1)
+        self.status_pattern.play()
+        
+        print("[MONITOR] Status monitoring enabled")
+        print("[MONITOR] Writing to engine_status.txt and engine_log.txt")
+    
+    def update_status(self):
+        """Write current status to files"""
+        try:
+            level = float(self.peak_meter.get())
+            
+            # One-line status
+            with open('engine_status.txt', 'w') as f:
+                f.write(f"AUDIO: {level:.4f} | MSG: {self.msg_count} | GATES: {len(self.active_gates)} | LAST: {self.last_msg} | TIME: {time.strftime('%H:%M:%S')}\n")
+            
+            # Log significant events
+            if level < 0.001 and self.last_level > 0.01:
+                self.log_event(f"SILENCE_DETECTED (was {self.last_level:.4f})")
+            elif level > 0.01 and self.last_level < 0.001:
+                self.log_event(f"AUDIO_STARTED ({level:.4f})")
+            
+            self.last_level = level
+        except:
+            pass  # Don't crash audio thread
+    
+    def log_event(self, event):
+        """Log event to buffer and file"""
+        entry = f"{time.strftime('%H:%M:%S')} | LEVEL: {self.last_level:.4f} | {event}"
+        self.log_buffer.append(entry)
+        
+        try:
+            with open('engine_log.txt', 'w') as f:
+                f.write('\n'.join(self.log_buffer))
+        except:
+            pass
+    
+    def map_route(self, path, handler, meta=None):
+        """
+        Route wrapper that registers metadata and maps handler atomically.
+        This ensures registry stays in sync with actual routes.
+        """
+        # Register the route
+        self.registered_routes[path] = {
+            "handler": handler,
+            "meta": meta or {}
+        }
+        
+        # Log in verbose mode
+        if self.verbose:
+            if meta:
+                print(f"[REGISTRY] Registered route {path} with metadata: {meta}")
+            else:
+                print(f"[REGISTRY] WARNING: Route {path} registered without metadata")
+        
+        # Map to dispatcher
+        self.dispatcher.map(path, handler)
+        
+        # Update registry if this is a parameter route
+        if path.startswith("/mod/") and meta:
+            parts = path.split("/")
+            if len(parts) >= 4:
+                module_id = parts[2]
+                param = "/".join(parts[3:])
+                
+                # Ensure module exists in registry
+                if module_id not in self.registry["modules"]:
+                    self.registry["modules"][module_id] = {"params": {}}
+                
+                # Update parameter metadata
+                self.registry["modules"][module_id]["params"][param] = meta
+    
+    def track_unknown_route(self, addr):
+        """Track routes that were called but not registered"""
+        if addr not in self.registered_routes and addr not in self.unknown_routes:
+            self.unknown_routes.add(addr)
+            print(f"[REGISTRY] WARNING: Unknown route accessed: {addr}")
     
     def setup_osc_server(self):
         """Setup OSC server for control messages"""
@@ -113,19 +696,71 @@ class PyoEngine:
         # Create dispatcher for OSC routing
         self.dispatcher = dispatcher.Dispatcher()
         
-        # Module parameter control: /mod/<module_id>/<param>
-        self.dispatcher.map("/mod/*/*", self.handle_mod_param)
+        # Register all routes with metadata using the wrapper
         
-        # Gate control: /gate/<module_id>
-        self.dispatcher.map("/gate/*", self.handle_gate)
+        # Module parameter control - wildcard pattern (handled specially)
+        self.map_route("/mod/*/*", self.handle_mod_param, 
+                      meta={"type": "wildcard", "description": "Module parameter control"})
         
-        # Engine control
-        self.dispatcher.map("/engine/start", lambda addr, *args: self.start())
-        self.dispatcher.map("/engine/stop", lambda addr, *args: self.stop())
-        self.dispatcher.map("/engine/status", lambda addr, *args: self.print_status())
-        self.dispatcher.map("/engine/list", lambda addr, *args: self.list_modules())
+        # Gate control - wildcard pattern
+        self.map_route("/gate/*", self.handle_gate,
+                      meta={"type": "wildcard", "description": "Gate control for modules"})
         
-        # Catch-all for debugging
+        # Engine control routes
+        self.map_route("/engine/start", lambda addr, *args: self.start(),
+                      meta={"args": [], "description": "Start audio processing"})
+        
+        self.map_route("/engine/stop", lambda addr, *args: self.stop(),
+                      meta={"args": [], "description": "Stop audio processing"})
+        
+        self.map_route("/engine/status", lambda addr, *args: self.print_status(),
+                      meta={"args": [], "description": "Print detailed status"})
+        
+        self.map_route("/engine/list", lambda addr, *args: self.list_modules(),
+                      meta={"args": [], "description": "List all modules (human-readable)"})
+        
+        self.map_route("/engine/schema", self.handle_schema,
+                      meta={"args": ["[format]"], "description": "Get full parameter schema", 
+                            "formats": ["json", "stdout", "file"]})
+        
+        # Sequencer control routes with full metadata
+        self.map_route("/seq/add", self.handle_seq_add,
+                      meta={"args": ["track_id", "voice_id", "pattern", "[base_freq]", "[filter_freq]", "[notes]"],
+                            "description": "Add a new track to the sequencer",
+                            "example": "/seq/add kick voice1 X...X...X...X... 60 200"})
+        
+        self.map_route("/seq/remove", lambda addr, *args: self.sequencer.remove_track(str(args[0])) if args else False,
+                      meta={"args": ["track_id"], "description": "Remove a track from the sequencer"})
+        
+        self.map_route("/seq/clear", lambda addr, *args: self.sequencer.clear(),
+                      meta={"args": [], "description": "Clear all tracks"})
+        
+        self.map_route("/seq/start", lambda addr, *args: self.sequencer.start(),
+                      meta={"args": [], "description": "Start the sequencer"})
+        
+        self.map_route("/seq/stop", lambda addr, *args: self.sequencer.stop(),
+                      meta={"args": [], "description": "Stop the sequencer and gate off all voices"})
+        
+        self.map_route("/seq/bpm", lambda addr, *args: self.sequencer.set_bpm(float(args[0])) if args else None,
+                      meta={"args": ["bpm_value"], "type": "float", "min": 30, "max": 300, 
+                            "default": 120, "description": "Set sequencer BPM"})
+        
+        self.map_route("/seq/swing", lambda addr, *args: self.sequencer.set_swing(float(args[0])) if args else None,
+                      meta={"args": ["swing_amount"], "type": "float", "min": 0, "max": 0.6,
+                            "default": 0, "description": "Set swing amount"})
+        
+        self.map_route("/seq/update/pattern", 
+                      lambda addr, *args: self.sequencer.update_pattern(str(args[0]), str(args[1])) if len(args) >= 2 else None,
+                      meta={"args": ["track_id", "new_pattern"], "description": "Update a track's pattern"})
+        
+        self.map_route("/seq/update/notes",
+                      lambda addr, *args: self.sequencer.update_notes(str(args[0]), str(args[1])) if len(args) >= 2 else None,
+                      meta={"args": ["track_id", "notes_string"], "description": "Update a track's note sequence"})
+        
+        self.map_route("/seq/status", lambda addr, *args: print(f"[SEQ] {self.sequencer.get_status()}"),
+                      meta={"args": [], "description": "Get sequencer status"})
+        
+        # Catch-all for debugging - tracks unknown routes
         self.dispatcher.set_default_handler(self.handle_unknown)
         
         # Create OSC server on port 5005
@@ -181,6 +816,10 @@ class PyoEngine:
                     voice.set_reverb_send(value)
                 elif param == 'send/delay':
                     voice.set_delay_send(value)
+                elif param == 'slide_time':
+                    voice.set_slide_time(value)
+                elif param == 'osc/type':
+                    voice.set_waveform(value)
         
         # Backward compatibility: map old names to voice1
         elif module_id == 'sine1' and param == 'freq':
@@ -214,9 +853,38 @@ class PyoEngine:
                 self.delay.set_lowcut(value)
             elif param == 'highcut':
                 self.delay.set_highcut(value)
+        
+        # Route acid filter parameters
+        elif module_id == 'acid1':
+            if param == 'cutoff':
+                self.acid1.set_cutoff(value)
+            elif param == 'res':
+                self.acid1.set_res(value)
+            elif param == 'env_amount':
+                self.acid1.set_env_amount(value)
+            elif param == 'decay':
+                self.acid1.set_decay(value)
+            elif param == 'accent':
+                self.acid1.set_accent(value)
+            elif param == 'cutoff_offset':
+                self.acid1.set_cutoff_offset(value)
+            elif param == 'res_accent_boost':
+                self.acid1.set_res_accent_boost(value)
+            elif param == 'accent_decay':
+                self.acid1.set_accent_decay(value)
+            elif param == 'drive':
+                self.acid1.set_drive(value)
+            elif param == 'mix':
+                self.acid1.set_mix(value)
+            elif param == 'vol_comp':
+                self.acid1.set_vol_comp(value)
     
     def handle_gate(self, addr, *args):
         """Handle /gate/<module_id> value"""
+        
+        # Track messages
+        self.msg_count += 1
+        self.last_msg = f"{addr} {args[0] if args else ''}"[:40]
         
         parts = addr.split('/')
         if len(parts) < 3 or len(args) < 1:
@@ -225,6 +893,13 @@ class PyoEngine:
         module_id = parts[2]
         gate = args[0]
         
+        # Track active gates
+        if float(gate) > 0:
+            self.active_gates.add(module_id)
+            self.log_event(f"GATE_ON: {module_id}")
+        else:
+            self.active_gates.discard(module_id)
+        
         if self.verbose:
             print(f"[OSC] Gate {module_id} = {gate}")
         
@@ -232,13 +907,107 @@ class PyoEngine:
         if module_id.startswith('voice'):
             if module_id in self.voices:
                 self.voices[module_id].gate(gate)
+                
+                # If voice2, also trigger acid1
+                if module_id == 'voice2':
+                    self.acid1.gate(gate)
+        
+        # Direct acid gate (optional, aliased to voice2)
+        elif module_id == 'acid1':
+            self.acid1.gate(gate)
+            # Also gate voice2 to keep them in sync
+            self.voices['voice2'].gate(gate)
         
         # Backward compatibility: map old names to voice1
         elif module_id == 'adsr1' or module_id == '1':
             self.voices['voice1'].gate(gate)
     
+    def handle_seq_add(self, addr, *args):
+        """Handle /seq/add track_id voice_id pattern [base_freq] [filter_freq] [notes] ..."""
+        if len(args) < 3:
+            print(f"[OSC] /seq/add requires at least 3 args: track_id voice_id pattern")
+            return
+        
+        track_id = str(args[0])
+        voice_id = str(args[1])
+        pattern = str(args[2])
+        
+        # Parse optional kwargs from remaining args
+        kwargs = {}
+        if len(args) > 3:
+            # Try to parse pairs of key=value or positional common params
+            for i in range(3, len(args)):
+                arg = str(args[i])
+                if '=' in arg:
+                    # Key=value format
+                    key, value = arg.split('=', 1)
+                    try:
+                        # Try to convert to float if possible
+                        kwargs[key] = float(value)
+                    except:
+                        kwargs[key] = value
+                else:
+                    # Positional args mapping (for common params)
+                    if i == 3:
+                        try:
+                            kwargs['base_freq'] = float(arg)
+                        except:
+                            pass
+                    elif i == 4:
+                        try:
+                            kwargs['filter_freq'] = float(arg)
+                        except:
+                            pass
+                    elif i == 5:
+                        kwargs['notes'] = arg  # Will be parsed by add_track
+        
+        # Add the track
+        success = self.sequencer.add_track(track_id, voice_id, pattern, **kwargs)
+        if success and self.verbose:
+            print(f"[OSC] Added track '{track_id}' with pattern length {len(pattern)}")
+    
+    def handle_schema(self, addr, *args):
+        """Handle /engine/schema - return full parameter schema"""
+        format_type = str(args[0]) if args else "stdout"
+        
+        # Build complete schema including registered and unknown routes
+        complete_schema = dict(self.registry)
+        
+        # Add registered routes info
+        complete_schema["registered_routes"] = list(self.registered_routes.keys())
+        
+        # Add unknown routes if any were tracked
+        if self.unknown_routes:
+            complete_schema["unknown_routes"] = list(self.unknown_routes)
+            complete_schema["warning"] = "Unknown routes detected - these may indicate drift!"
+        
+        # Convert to JSON
+        schema_json = json.dumps(complete_schema, indent=2)
+        
+        if format_type == "json" or format_type == "stdout":
+            # Print to stdout
+            print("\n" + "="*50)
+            print("ENGINE PARAMETER SCHEMA")
+            print("="*50)
+            print(schema_json)
+            print("="*50 + "\n")
+        
+        elif format_type == "file":
+            # Write to file if environment variable is set
+            if os.environ.get('CHRONUS_EXPORT_SCHEMA'):
+                filename = f"chronus_schema_{time.strftime('%Y%m%d_%H%M%S')}.json"
+                with open(filename, 'w') as f:
+                    f.write(schema_json)
+                print(f"[SCHEMA] Exported to {filename}")
+            else:
+                print("[SCHEMA] Set CHRONUS_EXPORT_SCHEMA=1 to enable file export")
+        
+        # TODO: Add OSC reply-to functionality when needed
+        # This would require tracking the sender address and using send_message back
+    
     def handle_unknown(self, addr, *args):
-        """Debug handler for unmatched OSC messages"""
+        """Debug handler for unmatched OSC messages - tracks drift"""
+        self.track_unknown_route(addr)
         print(f"[OSC] Unknown: {addr} {args}")
     
     def start(self):
@@ -247,7 +1016,10 @@ class PyoEngine:
         print("[PYO] Audio started")
     
     def stop(self):
-        """Stop audio processing"""
+        """Stop audio processing and sequencer"""
+        # Stop sequencer first
+        self.sequencer.stop()
+        # Then stop audio
         self.server.stop()
         print("[PYO] Audio stopped")
     
@@ -263,6 +1035,9 @@ class PyoEngine:
         print("\nVoices (4):")
         for voice_id in self.voices:
             print(f"  {voice_id}: ready")
+        print("\nDSP Modules:")
+        acid_status = self.acid1.get_status()
+        print(f"  acid1: cutoff={acid_status['cutoff']:.0f}Hz res={acid_status['res']:.2f} (on voice2)")
         print("\nEffects:")
         print(f"  reverb1: mix={self.reverb.get_status()['mix']:.2f}")
         print(f"  delay1: time={self.delay.get_status()['time']:.2f}s")
@@ -286,6 +1061,21 @@ class PyoEngine:
         print("  /mod/voiceN/send/reverb <0-1>")
         print("  /mod/voiceN/send/delay <0-1>")
         print("  /gate/voiceN <0|1>")
+        
+        print("\nDSP Modules:")
+        print("  acid1 (TB-303 filter on voice2):")
+        print("    /mod/acid1/cutoff <80-5000> - Base cutoff Hz")
+        print("    /mod/acid1/res <0-0.98> - Resonance")
+        print("    /mod/acid1/env_amount <0-5000> - Envelope depth Hz")
+        print("    /mod/acid1/decay <0.02-1.0> - Envelope decay s")
+        print("    /mod/acid1/accent <0-1> - Accent level")
+        print("    /mod/acid1/cutoff_offset <0-1000> - Accent cutoff boost")
+        print("    /mod/acid1/res_accent_boost <0-0.4> - Accent resonance")
+        print("    /mod/acid1/accent_decay <0.02-0.15> - Accent env decay")
+        print("    /mod/acid1/drive <0-1> - Pre-filter drive")
+        print("    /mod/acid1/mix <0-1> - Wet/dry mix")
+        print("    /mod/acid1/vol_comp <0-1> - Resonance compensation")
+        print("    /gate/acid1 - Optional (auto-triggers with voice2)")
         
         print("\nEffects:")
         print("  /mod/reverb1/mix <0-1>")

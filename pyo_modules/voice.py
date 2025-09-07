@@ -2,6 +2,7 @@
 Voice module for Music Chronus
 Single voice with Sine -> ADSR -> Biquad chain
 All frequency/amplitude parameters smoothed with Sig/SigTo
+SIMPLIFIED VERSION FOR DEBUGGING
 """
 
 from pyo import *
@@ -59,6 +60,10 @@ class Voice:
             freq=self.freq,
             mul=self.adsr
         )
+        
+        # Store pre-filter signal for acid input
+        # This is the oscillator output before filtering
+        self.prefilter_signal = self.osc
         
         # Biquad lowpass filter with smoothed parameters
         self.filter = Biquad(
@@ -144,6 +149,19 @@ class Voice:
         """Get signal to send to delay"""
         return self.output * self.delay_send
     
+    def get_prefilter_signal(self):
+        """Get pre-filter signal (oscillator * ADSR) for acid input"""
+        return self.prefilter_signal
+    
+    # Stub methods for new features (disabled for now)
+    def set_slide_time(self, time):
+        """Stub - slide not implemented in simple version"""
+        pass
+    
+    def set_waveform(self, waveform):
+        """Stub - waveform switching not implemented in simple version"""
+        pass
+    
     def get_status(self):
         """Get current voice status"""
         return {
@@ -160,4 +178,25 @@ class Voice:
                 'sustain': self.adsr.sustain,
                 'release': self.adsr.release
             }
+        }
+    
+    def get_schema(self):
+        """Get parameter schema for this voice module"""
+        return {
+            "name": f"Voice ({self.voice_id})",
+            "type": "voice",
+            "params": {
+                "freq": {"type": "float", "min": 20, "max": 5000, "default": 440.0, "smoothing_ms": 20, "unit": "Hz"},
+                "amp": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20},
+                "filter/freq": {"type": "float", "min": 50, "max": 8000, "default": 1000.0, "smoothing_ms": 20, "unit": "Hz"},
+                "filter/q": {"type": "float", "min": 0.5, "max": 10, "default": 2.0, "smoothing_ms": 20},
+                "adsr/attack": {"type": "float", "min": 0.001, "max": 2, "default": 0.01, "unit": "seconds"},
+                "adsr/decay": {"type": "float", "min": 0, "max": 2, "default": 0.1, "unit": "seconds"},
+                "adsr/sustain": {"type": "float", "min": 0, "max": 1, "default": 0.7},
+                "adsr/release": {"type": "float", "min": 0.01, "max": 3, "default": 0.5, "unit": "seconds"},
+                "send/reverb": {"type": "float", "min": 0, "max": 1, "default": 0.0},
+                "send/delay": {"type": "float", "min": 0, "max": 1, "default": 0.0}
+            },
+            "gates": ["gate"],
+            "notes": "Polyphonic voice with Sine -> ADSR -> Biquad filter chain"
         }

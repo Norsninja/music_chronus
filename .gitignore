@@ -26,6 +26,15 @@ Thumbs.db
 # But keep recordings for documentation
 !recordings/*.wav
 *.mp3
+
+# Runtime files
+engine_log.txt
+engine_status.txt
+*.backup
+temp_*.txt
+
+# Schema exports
+chronus_schema_*.json
 .coverage
 htmlcov/
 dist/
