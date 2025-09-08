@@ -10,6 +10,7 @@ import sys
 import time
 import threading
 import json
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -740,7 +741,7 @@ class PyoEngine:
         # Create routing and effects with proper audio signal passing
         self.setup_routing()
         
-        print("[PYO] Created 4 voices + acid1 + reverb + delay")
+        print("[PYO] Created 4 voices + acid1 + dist1 + reverb + delay")
     
     def setup_routing(self):
         """Setup signal routing: voices -> acid (voice2) -> distortion -> effects -> output"""
@@ -761,6 +762,7 @@ class PyoEngine:
         # Insert distortion as master effect after mixing, before sends
         self.dist1 = DistortionModule(self.dry_mix, module_id="dist1")
         self.distorted_mix = self.dist1.output
+        print("[PYO] Created dist1 distortion module (master insert)")
         
         # Register distortion module schema
         self.register_module_schema("dist1", self.dist1.get_schema())
@@ -929,6 +931,9 @@ class PyoEngine:
                         for band_follower in self.spectrum_bands:
                             # Get current amplitude of this frequency band
                             level = float(band_follower.get())
+                            # Check for NaN/Inf and replace with 0
+                            if math.isnan(level) or math.isinf(level):
+                                level = 0.0
                             # Scale for display (adjust multiplier as needed)
                             spectrum.append(min(level * 50, 1.0))
                         
@@ -1066,32 +1071,32 @@ class PyoEngine:
                             "description": "Add a new track to the sequencer",
                             "example": "/seq/add kick voice1 X...X...X...X... 60 200"})
         
-        self.map_route("/seq/remove", lambda addr, *args: self.sequencer.remove_track(str(args[0])) if args else False,
+        self.map_route("/seq/remove", self.handle_seq_remove,
                       meta={"args": ["track_id"], "description": "Remove a track from the sequencer"})
         
-        self.map_route("/seq/clear", lambda addr, *args: self.sequencer.clear(),
+        self.map_route("/seq/clear", self.handle_seq_clear,
                       meta={"args": [], "description": "Clear all tracks"})
         
-        self.map_route("/seq/start", lambda addr, *args: self.sequencer.start(),
+        self.map_route("/seq/start", self.handle_seq_start,
                       meta={"args": [], "description": "Start the sequencer"})
         
-        self.map_route("/seq/stop", lambda addr, *args: self.sequencer.stop(),
+        self.map_route("/seq/stop", self.handle_seq_stop,
                       meta={"args": [], "description": "Stop the sequencer and gate off all voices"})
         
-        self.map_route("/seq/bpm", lambda addr, *args: self.sequencer.set_bpm(float(args[0])) if args else None,
+        self.map_route("/seq/bpm", self.handle_seq_bpm,
                       meta={"args": ["bpm_value"], "type": "float", "min": 30, "max": 300, 
                             "default": 120, "description": "Set sequencer BPM"})
         
-        self.map_route("/seq/swing", lambda addr, *args: self.sequencer.set_swing(float(args[0])) if args else None,
+        self.map_route("/seq/swing", self.handle_seq_swing,
                       meta={"args": ["swing_amount"], "type": "float", "min": 0, "max": 0.6,
                             "default": 0, "description": "Set swing amount"})
         
         self.map_route("/seq/update/pattern", 
-                      lambda addr, *args: self.sequencer.update_pattern(str(args[0]), str(args[1])) if len(args) >= 2 else None,
+                      self.handle_update_pattern,
                       meta={"args": ["track_id", "new_pattern"], "description": "Update a track's pattern"})
         
         self.map_route("/seq/update/notes",
-                      lambda addr, *args: self.sequencer.update_notes(str(args[0]), str(args[1])) if len(args) >= 2 else None,
+                      self.handle_update_notes,
                       meta={"args": ["track_id", "notes_string"], "description": "Update a track's note sequence"})
         
         self.map_route("/seq/status", lambda addr, *args: print(f"[SEQ] {self.sequencer.get_status()}"),
@@ -1456,6 +1461,53 @@ class PyoEngine:
         """Handle pattern list - returns nothing to avoid OSC errors"""
         self.list_patterns()
         # Don't return anything - OSC handlers should return None
+    
+    def handle_update_pattern(self, addr, *args):
+        """Handle sequencer pattern update - no return value to avoid OSC errors"""
+        if len(args) >= 2:
+            self.sequencer.update_pattern(str(args[0]), str(args[1]))
+        else:
+            print(f"[SEQ] Error: update_pattern requires track_id and pattern")
+    
+    def handle_update_notes(self, addr, *args):
+        """Handle sequencer notes update - no return value to avoid OSC errors"""
+        if len(args) >= 2:
+            self.sequencer.update_notes(str(args[0]), str(args[1]))
+        else:
+            print(f"[SEQ] Error: update_notes requires track_id and notes")
+    
+    def handle_seq_remove(self, addr, *args):
+        """Handle sequencer track removal - no return value to avoid OSC errors"""
+        if len(args) >= 1:
+            self.sequencer.remove_track(str(args[0]))  # Don't return the boolean result
+        else:
+            print(f"[SEQ] Error: remove requires track_id")
+    
+    def handle_seq_clear(self, addr, *args):
+        """Handle sequencer clear - no return value to avoid OSC errors"""
+        self.sequencer.clear()  # Don't return anything
+    
+    def handle_seq_start(self, addr, *args):
+        """Handle sequencer start - no return value to avoid OSC errors"""
+        self.sequencer.start()  # Don't return anything
+    
+    def handle_seq_stop(self, addr, *args):
+        """Handle sequencer stop - no return value to avoid OSC errors"""
+        self.sequencer.stop()  # Don't return anything
+    
+    def handle_seq_bpm(self, addr, *args):
+        """Handle sequencer BPM change - no return value to avoid OSC errors"""
+        if len(args) >= 1:
+            self.sequencer.set_bpm(float(args[0]))
+        else:
+            print(f"[SEQ] Error: bpm requires a value")
+    
+    def handle_seq_swing(self, addr, *args):
+        """Handle sequencer swing change - no return value to avoid OSC errors"""
+        if len(args) >= 1:
+            self.sequencer.set_swing(float(args[0]))
+        else:
+            print(f"[SEQ] Error: swing requires a value")
     
     def handle_unknown(self, addr, *args):
         """Debug handler for unmatched OSC messages - tracks drift"""

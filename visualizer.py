@@ -57,9 +57,15 @@ class MusicChronusVisualizer:
         self.running = True
         self.refresh_rate = 20  # Target FPS
         
+        # Initialize pet
+        self.pet = None  # Will be initialized after layout
+        
         # Initialize components
         self.setup_layout()
         self.setup_osc_listener()
+        
+        # Create pet after layout is ready
+        self.pet = ChronusPet(self)
         
     def setup_layout(self):
         """Configure the Rich layout with panels"""
@@ -67,6 +73,7 @@ class MusicChronusVisualizer:
         self.layout.split_column(
             Layout(name="header", size=3),
             Layout(name="main"),
+            Layout(name="pet", size=8),  # Pet panel area
             Layout(name="footer", size=3)
         )
         
@@ -203,6 +210,11 @@ class MusicChronusVisualizer:
             
             for i in range(4):
                 level = self.audio_levels[i]
+                # Handle NaN and invalid values
+                if level != level or level is None:  # NaN check
+                    level = 0.0
+                level = max(0.0, min(1.0, level))  # Clamp to valid range
+                
                 bar_width = int(level * 20)
                 bar = "█" * bar_width + "░" * (20 - bar_width)
                 
@@ -221,7 +233,13 @@ class MusicChronusVisualizer:
                 )
                 
             # Add master level
-            bar_width = int(self.master_level * 20)
+            master_level = self.master_level
+            # Handle NaN and invalid values
+            if master_level != master_level or master_level is None:  # NaN check
+                master_level = 0.0
+            master_level = max(0.0, min(1.0, master_level))  # Clamp to valid range
+            
+            bar_width = int(master_level * 20)
             bar = "█" * bar_width + "░" * (20 - bar_width)
             table.add_row(
                 "MASTER",
@@ -244,6 +262,11 @@ class MusicChronusVisualizer:
             for row in range(max_height, 0, -1):
                 line = ""
                 for i, value in enumerate(self.spectrum_data):
+                    # Handle NaN and invalid values
+                    if value != value or value is None:  # NaN check
+                        value = 0.0
+                    value = max(0.0, min(1.0, value))  # Clamp to valid range
+                    
                     bar_height = int(value * max_height)
                     if bar_height >= row:
                         line += "██"
@@ -292,6 +315,10 @@ class MusicChronusVisualizer:
         self.layout["spectrum"].update(self.create_spectrum_display())
         self.layout["messages"].update(self.create_message_display())
         
+        # Update pet
+        if self.pet:
+            self.layout["pet"].update(self.pet.render())
+        
         # Update footer with connection status
         status = "✓ Connected" if self.engine_connected else "✗ Disconnected"
         color = "green" if self.engine_connected else "red"
@@ -332,6 +359,202 @@ class MusicChronusVisualizer:
                 # Check connection timeout
                 if time.time() - self.last_status_update > 2.0:
                     self.engine_connected = False
+
+
+class ChronusPet:
+    """Musical companion that reacts to the quality of music being created"""
+    
+    def __init__(self, visualizer):
+        self.visualizer = visualizer
+        
+        # Pet states
+        self.states = {
+            "sleeping": {
+                "frames": ["( -_- )", "( =_= )", "( -_- )", "( =_= )"],
+                "message": "zzz... no music detected",
+                "color": "dim white"
+            },
+            "waking": {
+                "frames": ["( o.o )", "( o_o )", "( o.o )", "( o_o )"],
+                "message": "oh? something's happening...",
+                "color": "yellow"
+            },
+            "vibing": {
+                "frames": ["( ^_^ )", "( ^‿^ )", "( ^_^ )", "( ^‿^ )"],
+                "message": "nice sounds! keep going!",
+                "color": "green"
+            },
+            "dancing": {
+                "frames": ["\\( ^o^ )/", "/( ^o^ )\\", "\\( ^o^ )/", "/( ^o^ )\\"],
+                "message": "this is getting good!",
+                "color": "cyan"
+            },
+            "raving": {
+                "frames": ["\\( >◡< )/", "~( >◡< )~", "/( >◡< )\\", "~( >◡< )~"],
+                "message": "AMAZING! Peak musical energy!",
+                "color": "magenta"
+            },
+            "transcendent": {
+                "frames": [
+                    "✧･ﾟ: *✧･ﾟ:* \\( ◕‿◕ )/ *:･ﾟ✧*:･ﾟ✧",
+                    "･ﾟ✧*:･ﾟ✧ \\( ◕‿◕ )/ ✧･ﾟ: *✧･ﾟ:*",
+                    "*✧･ﾟ:*✧･ﾟ \\( ◕‿◕ )/ ･ﾟ✧*:･ﾟ✧*",
+                    "✧･ﾟ: *✧･ﾟ:* \\( ◕‿◕ )/ *:･ﾟ✧*:･ﾟ✧"
+                ],
+                "message": "TRANSCENDENT! Musical nirvana achieved!",
+                "color": "bold magenta"
+            }
+        }
+        
+        # Current state
+        self.current_state = "sleeping"
+        self.frame_index = 0
+        self.frame_counter = 0
+        self.frames_per_animation = 3  # Slow down animation
+        
+        # Musical score tracking
+        self.musical_score = 0
+        self.score_history = deque(maxlen=20)  # Track recent scores
+        
+        # State transition thresholds
+        self.state_thresholds = {
+            "sleeping": (0, 10),
+            "waking": (10, 30),
+            "vibing": (30, 50),
+            "dancing": (50, 70),
+            "raving": (70, 90),
+            "transcendent": (90, 100)
+        }
+        
+    def calculate_musical_score(self):
+        """Calculate a score based on current musical activity"""
+        score = 0
+        
+        # Check audio levels (max 25 points)
+        # Filter out NaN values first
+        valid_levels = []
+        for level in self.visualizer.audio_levels:
+            if level == level and level is not None:  # Not NaN
+                valid_levels.append(max(0.0, min(1.0, level)))
+            else:
+                valid_levels.append(0.0)
+        
+        active_voices = sum(1 for level in valid_levels if level > 0.1)
+        score += active_voices * 6  # Up to 24 points for 4 voices
+        
+        # Check spectrum balance (max 25 points)
+        if self.visualizer.spectrum_data:
+            # Filter out NaN values from spectrum data
+            valid_spectrum = []
+            for band in self.visualizer.spectrum_data:
+                if band == band and band is not None:  # Not NaN
+                    valid_spectrum.append(max(0.0, min(1.0, band)))
+                else:
+                    valid_spectrum.append(0.0)
+            
+            # Count bands with energy
+            active_bands = sum(1 for band in valid_spectrum if band > 0.1)
+            score += active_bands * 3  # Up to 24 points for 8 bands
+            
+            # Bonus for balanced spectrum (not all in one frequency)
+            if active_bands > 3 and len(valid_spectrum) > 0:
+                variance = max(valid_spectrum) - min(valid_spectrum)
+                if 0.2 < variance < 0.8:  # Good dynamic range
+                    score += 5
+        
+        # Check for activity patterns (max 25 points)
+        # Only count musical OSC messages, not status messages
+        if self.visualizer.osc_messages:
+            # Filter for musical messages (gates, mods, seq)
+            musical_messages = [
+                msg for msg in self.visualizer.osc_messages 
+                if any(prefix in msg.get('addr', '') 
+                      for prefix in ['/gate/', '/mod/', '/seq/'])
+            ]
+            recent_messages = len(musical_messages)
+            if recent_messages > 0:  # Changed from > 5 to > 0
+                score += min(recent_messages * 3, 25)  # Scale up points
+        
+        # Energy variance bonus (max 25 points)
+        # Only add variance if there's actual activity
+        if score > 0:  # Only track variance when music is playing
+            self.score_history.append(score)
+            if len(self.score_history) > 5:
+                variance = max(self.score_history) - min(self.score_history)
+                if variance > 10:  # Music is changing, not static
+                    score += min(variance, 25)
+        else:
+            # Clear history when no activity
+            self.score_history.clear()
+        
+        # Clamp to 0-100
+        return max(0, min(100, score))
+    
+    def update_state(self):
+        """Update pet state based on musical score"""
+        self.musical_score = self.calculate_musical_score()
+        
+        # Find appropriate state for current score
+        new_state = "sleeping"
+        for state, (min_score, max_score) in self.state_thresholds.items():
+            if min_score <= self.musical_score < max_score:
+                new_state = state
+                break
+        
+        # State change detection
+        if new_state != self.current_state:
+            self.current_state = new_state
+            self.frame_index = 0  # Reset animation
+    
+    def render(self):
+        """Render the pet panel"""
+        self.update_state()
+        
+        # Get current animation frame
+        state_data = self.states[self.current_state]
+        
+        # Update animation frame
+        self.frame_counter += 1
+        if self.frame_counter >= self.frames_per_animation:
+            self.frame_counter = 0
+            self.frame_index = (self.frame_index + 1) % len(state_data["frames"])
+        
+        current_frame = state_data["frames"][self.frame_index]
+        
+        # Create score bar
+        bar_width = 40
+        filled = int((self.musical_score / 100) * bar_width)
+        score_bar = "█" * filled + "░" * (bar_width - filled)
+        
+        # Determine score color
+        if self.musical_score < 30:
+            bar_color = "red"
+        elif self.musical_score < 60:
+            bar_color = "yellow"
+        else:
+            bar_color = "green"
+        
+        # Build display
+        lines = []
+        lines.append("")  # Spacing
+        lines.append(Text(current_frame, justify="center", style=state_data["color"]))
+        lines.append("")
+        lines.append(Text(state_data["message"], justify="center", style=state_data["color"]))
+        lines.append("")
+        lines.append(Text(f"Musical Energy: {self.musical_score}/100", justify="center"))
+        lines.append(Text(f"[{score_bar}]", justify="center", style=bar_color))
+        lines.append("")
+        
+        # Combine lines
+        content = Columns(lines, align="center", expand=True)
+        
+        return Panel(
+            content,
+            title="🎵 Chronus Pet 🎵",
+            box=box.DOUBLE,
+            border_style=state_data["color"],
+            padding=(0, 2)
+        )
 
 
 if __name__ == "__main__":

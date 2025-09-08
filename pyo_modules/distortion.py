@@ -5,6 +5,8 @@ Uses pyo's Disto object for efficient waveshaping
 """
 
 from pyo import *
+# Explicitly import protection objects needed for emergency fix
+from pyo import ButHP, Clip, DCBlock
 
 class DistortionModule:
     """
@@ -40,20 +42,33 @@ class DistortionModule:
         self.tone_sig = Sig(0.5)
         self.tone = SigTo(self.tone_sig, time=self.smooth_time)
         
+        # EMERGENCY FIX: Pre-distortion HPF to remove problematic sub-bass
+        # Removes content below 20Hz that causes numerical instability
+        self.pre_hpf = ButHP(self.input, freq=20)  # 2nd order Butterworth
+        
         # Distortion processing using pyo's efficient Disto object
         # Disto uses waveshaping: y = (1 + k) * x / (1 + k * abs(x))
         # 4x faster than tanh/atan2 methods
+        # EMERGENCY FIX: Reduced slope from 0.9 to 0.7 for stability
         self.distorted = Disto(
-            self.input,
+            self.pre_hpf,  # Changed from self.input to use HPF'd signal
             drive=self.drive,
-            slope=0.9,  # Fixed slope for consistent character
+            slope=0.7,  # Reduced from 0.9 to prevent resonant oscillations
             mul=1.0
         )
+        
+        # EMERGENCY FIX: Add hard clipping protection against NaN/Inf
+        # Clips any values outside -1.0 to 1.0 range
+        self.clipped = Clip(self.distorted, min=-1.0, max=1.0)
+        
+        # EMERGENCY FIX: DC blocking to prevent offset accumulation
+        # Removes any DC bias that could destabilize the signal chain
+        self.dc_blocked = DCBlock(self.clipped)
         
         # Tone control using complementary filters
         # Low-pass for removing harshness
         self.tone_lp_freq = Scale(self.tone, inmin=0, inmax=1, outmin=1000, outmax=8000)
-        self.tone_lp = ButLP(self.distorted, freq=self.tone_lp_freq)
+        self.tone_lp = ButLP(self.dc_blocked, freq=self.tone_lp_freq)  # Changed to use protected signal
         
         # High-pass for removing muddiness
         self.tone_hp_freq = Scale(self.tone, inmin=0, inmax=1, outmin=500, outmax=100)
@@ -79,10 +94,15 @@ class DistortionModule:
         
         0.0-0.2: Subtle warmth
         0.2-0.5: Moderate crunch
-        0.5-0.8: Heavy distortion
-        0.8-1.0: Extreme saturation
+        0.5-0.8: Heavy distortion (use with caution on sub-bass)
+        0.8-1.0: Extreme saturation (not recommended with sub-bass)
+        
+        Note: Values above 0.8 may cause instability with sub-bass content
         """
         drive = max(0.0, min(1.0, float(drive)))
+        # Soft limit at 0.85 to prevent extreme instability
+        if drive > 0.85:
+            print(f"[WARNING] Distortion drive {drive:.2f} may cause instability with sub-bass")
         self.drive_sig.value = drive
     
     def set_mix(self, mix):

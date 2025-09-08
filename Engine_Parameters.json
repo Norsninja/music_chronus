@@ -1,0 +1,469 @@
+{
+  "version": "1.0.0",
+  "engine": "pyo",
+  "schema_version": "1.0",
+  "modules": {
+    "voice": {
+      "instances": [
+        "voice1",
+        "voice2",
+        "voice3",
+        "voice4"
+      ],
+      "params": {
+        "freq": {
+          "type": "float",
+          "min": 20,
+          "max": 5000,
+          "default": 440.0,
+          "smoothing_ms": 20,
+          "unit": "Hz"
+        },
+        "amp": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.3,
+          "smoothing_ms": 20
+        },
+        "filter/freq": {
+          "type": "float",
+          "min": 50,
+          "max": 8000,
+          "default": 1000.0,
+          "smoothing_ms": 20,
+          "unit": "Hz"
+        },
+        "filter/q": {
+          "type": "float",
+          "min": 0.5,
+          "max": 10,
+          "default": 2.0,
+          "smoothing_ms": 20
+        },
+        "adsr/attack": {
+          "type": "float",
+          "min": 0.001,
+          "max": 2,
+          "default": 0.01,
+          "unit": "seconds"
+        },
+        "adsr/decay": {
+          "type": "float",
+          "min": 0,
+          "max": 2,
+          "default": 0.1,
+          "unit": "seconds"
+        },
+        "adsr/sustain": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.7
+        },
+        "adsr/release": {
+          "type": "float",
+          "min": 0.01,
+          "max": 3,
+          "default": 0.5,
+          "unit": "seconds"
+        },
+        "send/reverb": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.0
+        },
+        "send/delay": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.0
+        }
+      },
+      "gates": [
+        "gate"
+      ],
+      "notes": "4-voice polyphonic synthesis with individual ADSR and filter"
+    },
+    "acid1": {
+      "params": {
+        "cutoff": {
+          "type": "float",
+          "min": 80,
+          "max": 5000,
+          "default": 1500.0,
+          "unit": "Hz"
+        },
+        "res": {
+          "type": "float",
+          "min": 0,
+          "max": 0.98,
+          "default": 0.45
+        },
+        "env_amount": {
+          "type": "float",
+          "min": 0,
+          "max": 5000,
+          "default": 2500.0,
+          "unit": "Hz"
+        },
+        "decay": {
+          "type": "float",
+          "min": 0.02,
+          "max": 1.0,
+          "default": 0.25,
+          "unit": "seconds"
+        },
+        "accent": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0,
+          "notes": "Currently disabled"
+        },
+        "cutoff_offset": {
+          "type": "float",
+          "min": 0,
+          "max": 1000,
+          "default": 300,
+          "unit": "Hz",
+          "notes": "Accent boost (disabled)"
+        },
+        "res_accent_boost": {
+          "type": "float",
+          "min": 0,
+          "max": 0.4,
+          "default": 0.2,
+          "notes": "Accent resonance (disabled)"
+        },
+        "accent_decay": {
+          "type": "float",
+          "min": 0.02,
+          "max": 0.15,
+          "default": 0.05,
+          "unit": "seconds",
+          "notes": "Accent decay (disabled)"
+        },
+        "drive": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.2
+        },
+        "mix": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 1.0
+        },
+        "vol_comp": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.5
+        }
+      },
+      "gates": [
+        "gate"
+      ],
+      "notes": "TB-303 style acid filter, processes voice2 pre-filter signal"
+    },
+    "dist1": {
+      "name": "Distortion (dist1)",
+      "type": "distortion",
+      "params": {
+        "drive": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.0,
+          "smoothing_ms": 20,
+          "notes": "0-0.2: warmth, 0.2-0.5: crunch, 0.5-1.0: heavy"
+        },
+        "mix": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.0,
+          "smoothing_ms": 20,
+          "notes": "Dry/wet mix with equal-loudness compensation"
+        },
+        "tone": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.5,
+          "smoothing_ms": 20,
+          "notes": "0=dark, 0.5=neutral, 1=bright"
+        }
+      },
+      "notes": "Master insert distortion using pyo Disto (4x faster than tanh)"
+    },
+    "reverb1": {
+      "params": {
+        "mix": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.3
+        },
+        "room": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.5
+        },
+        "damp": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.5
+        }
+      },
+      "notes": "Global reverb bus with per-voice sends"
+    },
+    "delay1": {
+      "params": {
+        "time": {
+          "type": "float",
+          "min": 0.1,
+          "max": 0.6,
+          "default": 0.25,
+          "unit": "seconds"
+        },
+        "feedback": {
+          "type": "float",
+          "min": 0,
+          "max": 0.7,
+          "default": 0.4,
+          "notes": "Limited to prevent runaway"
+        },
+        "mix": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.3
+        },
+        "lowcut": {
+          "type": "float",
+          "min": 20,
+          "max": 1000,
+          "default": 100,
+          "unit": "Hz"
+        },
+        "highcut": {
+          "type": "float",
+          "min": 1000,
+          "max": 10000,
+          "default": 5000,
+          "unit": "Hz"
+        }
+      },
+      "notes": "Global delay bus with filtering"
+    },
+    "lfo1": {
+      "name": "LFO (lfo1)",
+      "type": "lfo",
+      "params": {
+        "rate": {
+          "type": "float",
+          "min": 0.01,
+          "max": 10.0,
+          "default": 0.25,
+          "smoothing_ms": 20,
+          "unit": "Hz",
+          "notes": "0.01-0.5: slow, 0.5-2: wobble, 2-8: tremolo"
+        },
+        "depth": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.7,
+          "smoothing_ms": 20,
+          "notes": "Modulation amount: 0=none, 1=full"
+        }
+      },
+      "notes": "Simple sine LFO for modulation"
+    },
+    "lfo2": {
+      "name": "LFO (lfo2)",
+      "type": "lfo",
+      "params": {
+        "rate": {
+          "type": "float",
+          "min": 0.01,
+          "max": 10.0,
+          "default": 0.25,
+          "smoothing_ms": 20,
+          "unit": "Hz",
+          "notes": "0.01-0.5: slow, 0.5-2: wobble, 2-8: tremolo"
+        },
+        "depth": {
+          "type": "float",
+          "min": 0,
+          "max": 1,
+          "default": 0.7,
+          "smoothing_ms": 20,
+          "notes": "Modulation amount: 0=none, 1=full"
+        }
+      },
+      "notes": "Simple sine LFO for modulation"
+    },
+    "*": {
+      "params": {
+        "*": {
+          "type": "wildcard",
+          "description": "Module parameter control"
+        }
+      }
+    }
+  },
+  "sequencer": {
+    "commands": {
+      "/seq/add": {
+        "args": [
+          "track_id",
+          "voice_id",
+          "pattern",
+          "[base_freq]",
+          "[filter_freq]",
+          "[notes]"
+        ],
+        "description": "Add a new track to the sequencer",
+        "example": "/seq/add kick voice1 X...X...X...X... 60 200"
+      },
+      "/seq/remove": {
+        "args": [
+          "track_id"
+        ],
+        "description": "Remove a track from the sequencer"
+      },
+      "/seq/clear": {
+        "args": [],
+        "description": "Clear all tracks"
+      },
+      "/seq/start": {
+        "args": [],
+        "description": "Start the sequencer"
+      },
+      "/seq/stop": {
+        "args": [],
+        "description": "Stop the sequencer and gate off all voices"
+      },
+      "/seq/bpm": {
+        "args": [
+          "bpm_value"
+        ],
+        "range": [
+          30,
+          300
+        ],
+        "default": 120,
+        "description": "Set sequencer BPM"
+      },
+      "/seq/swing": {
+        "args": [
+          "swing_amount"
+        ],
+        "range": [
+          0,
+          0.6
+        ],
+        "default": 0,
+        "description": "Set swing amount"
+      },
+      "/seq/update/pattern": {
+        "args": [
+          "track_id",
+          "new_pattern"
+        ],
+        "description": "Update a track's pattern"
+      },
+      "/seq/update/notes": {
+        "args": [
+          "track_id",
+          "notes_string"
+        ],
+        "description": "Update a track's note sequence"
+      },
+      "/seq/status": {
+        "args": [],
+        "description": "Get sequencer status"
+      }
+    },
+    "pattern_notation": {
+      "X": "Accent hit (velocity 1.0)",
+      "x": "Normal hit (velocity 0.6)",
+      ".": "Rest (no trigger)"
+    }
+  },
+  "engine_commands": {
+    "/engine/start": {
+      "args": [],
+      "description": "Start audio processing"
+    },
+    "/engine/stop": {
+      "args": [],
+      "description": "Stop audio processing"
+    },
+    "/engine/status": {
+      "args": [],
+      "description": "Print detailed status"
+    },
+    "/engine/list": {
+      "args": [],
+      "description": "List all modules (human-readable)"
+    },
+    "/engine/schema": {
+      "args": [
+        "[format]"
+      ],
+      "description": "Get full parameter schema",
+      "formats": [
+        "json",
+        "stdout",
+        "file"
+      ]
+    },
+    "/engine/record/start": {
+      "args": [
+        "[filename]"
+      ],
+      "description": "Start recording to WAV file"
+    },
+    "/engine/record/stop": {
+      "args": [],
+      "description": "Stop current recording"
+    },
+    "/engine/record/status": {
+      "args": [],
+      "description": "Get recording status"
+    }
+  },
+  "registered_routes": [
+    "/mod/*/*",
+    "/gate/*",
+    "/engine/start",
+    "/engine/stop",
+    "/engine/status",
+    "/engine/list",
+    "/engine/schema",
+    "/engine/record/start",
+    "/engine/record/stop",
+    "/engine/record/status",
+    "/seq/add",
+    "/seq/remove",
+    "/seq/clear",
+    "/seq/start",
+    "/seq/stop",
+    "/seq/bpm",
+    "/seq/swing",
+    "/seq/update/pattern",
+    "/seq/update/notes",
+    "/seq/status",
+    "/pattern/save",
+    "/pattern/load",
+    "/pattern/list"
+  ]
+}
