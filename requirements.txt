@@ -9,3 +9,6 @@ python-osc>=1.8.0
 
 # Optional but recommended
 numpy>=1.24.0  # For any custom processing
+
+# Terminal visualizer
+rich>=13.7.0  # Modern terminal UI framework

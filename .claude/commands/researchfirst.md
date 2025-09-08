@@ -1,11 +1,12 @@
 ---
-description: Preliminary research for new proposed implementation
+description: Three tiered research protocol for new features.
 ---
-Before implementing , first confirm the scope of implentation. Research existing patterns in our codebase
-(engine, modules, OSC routes, schema, pattern save/load) and check industry standards/pyo-native approaches
-for how others achieve this. Propose the best-fit solution that integrates cleanly with our pipeline and schema
-registry. You should dispatch the Research Scout in parallel on multiple subtopics; they are already instructed to return a 
-comprehensive research doc (they will output this doc to project/research). 
-Share the created docs, and discuss the findings with Mike before making any changes.
+For the [feature] we discussed, please research thoroughly using our three-agent system: deploy codebase-researcher to understand
+our existing patterns (engine, modules, OSC routes, schema, pattern save/load) and technical-research-scout
+in parallel to investigate industry standards and external solutions. Once complete, use technical-planner
+to create a comprehensive implementation plan based on both research documents. All agents output to
+project/research/. Synthesize the findings, propose the best-fit solution that integrates cleanly with our
+pipeline and schema registry, and discuss with Mike before making any changes.
 
+If there are further notes they will be below:
 $ARGUMENTS

@@ -58,6 +58,26 @@ After successful pattern save/load implementation:
 - [x] **Demo: Tremolo** - LFO2 modulating voice3 amplitude (tested and audible)
 - [x] **Schema registry integration** - Dynamic registration via register_module_schema()
 
+### Week 2: Terminal Visualizer 📊 IN PROGRESS (2025-01-08)
+
+#### Phase 1: Foundation (Days 1-3) 🚧
+- [ ] **Basic visualizer scaffold** - Rich UI framework setup
+- [ ] **OSC listener thread** - Monitor port 5005 messages
+- [ ] **Status file reader** - Parse engine_status.txt
+- [ ] **Panel layout** - Meters, spectrum, messages areas
+
+#### Phase 2: Core Features (Days 4-7)
+- [ ] **Audio level meters** - Peak hold with VU decay
+- [ ] **FFT spectrum analyzer** - 8-band frequency display
+- [ ] **OSC message monitor** - Scrolling message history
+- [ ] **Voice state indicators** - Gate on/off, parameters
+
+#### Phase 3: Polish (Days 8-10)
+- [ ] **Performance optimization** - Target <5% CPU usage
+- [ ] **Color schemes** - CGA/EGA retro palettes
+- [ ] **Error handling** - Graceful disconnection/reconnection
+- [ ] **Documentation** - Usage guide and configuration
+
 ### Week 2: Slide/Glide Implementation ✅ COMPLETE (2025-01-07)
 
 #### Slide/Portamento (Completed 2025-01-07)

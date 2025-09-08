@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Union
 from pyo import *
-from pythonosc import dispatcher, osc_server
+from pythonosc import dispatcher, osc_server, udp_client
 
 # Import our pyo modules
 from pyo_modules import Voice, ReverbBus, DelayBus
@@ -847,6 +847,25 @@ class PyoEngine:
         # Audio level monitoring
         self.peak_meter = PeakAmp(self.master)
         
+        # Use multiple band-pass filters for spectrum analysis (FFT alternative)
+        # This approach doesn't require WxPython and gives us direct frequency band levels
+        self.spectrum_bands = []
+        frequencies = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+        for freq in frequencies:
+            # Bandpass filter for each frequency band
+            bp = ButBP(self.master, freq=freq, q=2)
+            # Get the amplitude of each band
+            follower = Follower(bp, freq=10)  # 10Hz update rate
+            self.spectrum_bands.append(follower)
+        
+        # OSC broadcast client for visualization data
+        self.viz_broadcast = udp_client.SimpleUDPClient('127.0.0.1', 5006)
+        
+        # Per-voice level monitoring
+        self.voice_meters = {}
+        for voice_id in self.voices:
+            self.voice_meters[voice_id] = PeakAmp(self.voices[voice_id].get_dry_signal())
+        
         # Statistics
         self.msg_count = 0
         self.last_msg = "none"
@@ -862,6 +881,7 @@ class PyoEngine:
         
         print("[MONITOR] Status monitoring enabled")
         print("[MONITOR] Writing to engine_status.txt and engine_log.txt")
+        print("[MONITOR] Broadcasting visualization data on port 5006")
     
     def setup_recording(self):
         """Initialize recording capability"""
@@ -878,13 +898,46 @@ class PyoEngine:
         print(f"[RECORDING] Output directory: {self.recordings_dir.absolute()}")
     
     def update_status(self):
-        """Write current status to files"""
+        """Write current status to files and broadcast visualization data"""
         try:
             level = float(self.peak_meter.get())
             
             # One-line status
             with open('engine_status.txt', 'w') as f:
                 f.write(f"AUDIO: {level:.4f} | MSG: {self.msg_count} | GATES: {len(self.active_gates)} | LAST: {self.last_msg} | TIME: {time.strftime('%H:%M:%S')}\n")
+            
+            # Broadcast visualization data via OSC
+            if hasattr(self, 'viz_broadcast'):
+                # Get voice levels (clamped to 0.0-1.0)
+                voice_levels = []
+                for voice_id in ['voice1', 'voice2', 'voice3', 'voice4']:
+                    if voice_id in self.voice_meters:
+                        level = float(self.voice_meters[voice_id].get())
+                        # Clamp to prevent display overflow
+                        voice_levels.append(max(0.0, min(1.0, level)))
+                    else:
+                        voice_levels.append(0.0)
+                
+                # Send voice levels
+                self.viz_broadcast.send_message('/viz/levels', voice_levels)
+                
+                # Get spectrum data from bandpass filters (8 bands)
+                if hasattr(self, 'spectrum_bands'):
+                    try:
+                        # Get the level from each frequency band
+                        spectrum = []
+                        for band_follower in self.spectrum_bands:
+                            # Get current amplitude of this frequency band
+                            level = float(band_follower.get())
+                            # Scale for display (adjust multiplier as needed)
+                            spectrum.append(min(level * 50, 1.0))
+                        
+                        # Send spectrum data
+                        self.viz_broadcast.send_message('/viz/spectrum', spectrum)
+                    except Exception as e:
+                        # If spectrum extraction fails, send zeros
+                        print(f"[DEBUG] Spectrum error: {e}")
+                        self.viz_broadcast.send_message('/viz/spectrum', [0.0] * 8)
             
             # Log significant events
             if level < 0.001 and self.last_level > 0.01:
