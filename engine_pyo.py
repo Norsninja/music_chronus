@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Music Chronus - Pyo Audio Engine
-Polyphonic synthesizer with 4 voices and global effects
+Polyphonic synthesizer with configurable voice count and global effects
 Maintains backward compatibility with existing OSC control schema
 """
 
@@ -25,6 +25,7 @@ from pyo_modules import Voice, ReverbBus, DelayBus
 from pyo_modules.acid_working import AcidFilter  # WORKING: Final version without accent
 from pyo_modules.distortion import DistortionModule  # Master insert distortion
 from pyo_modules.simple_lfo import SimpleLFOModule  # Pattern-compliant LFO module
+from pyo_modules.limiter import LimiterModule  # Master limiter for protection
 
 
 @dataclass
@@ -490,15 +491,22 @@ class PyoEngine:
         self.unknown_routes = set()
         self.registered_routes = {}
         
+        # Get configurable voice count
+        num_voices = int(os.environ.get('CHRONUS_NUM_VOICES', '4'))
+        num_voices = max(1, min(16, num_voices))
+        
+        # Generate voice instances dynamically
+        voice_instances = [f"voice{i}" for i in range(1, num_voices + 1)]
+        
         # Base registry structure
         self.registry = {
             "version": "1.0.0",
             "engine": "pyo",
             "schema_version": "1.0",
             "modules": {
-                # Voice modules (voice1-4)
+                # Voice modules (dynamic count)
                 "voice": {
-                    "instances": ["voice1", "voice2", "voice3", "voice4"],
+                    "instances": voice_instances,
                     "params": {
                         "freq": {"type": "float", "min": 20, "max": 5000, "default": 440.0, "smoothing_ms": 20, "unit": "Hz"},
                         "amp": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20},
@@ -722,40 +730,58 @@ class PyoEngine:
     def setup_voices_and_effects(self):
         """Create 4 voices, acid filter, and global effects buses"""
         
-        # Create 4 voices
+        # Get configurable voice count from environment
+        num_voices = int(os.environ.get('CHRONUS_NUM_VOICES', '4'))
+        num_voices = max(1, min(16, num_voices))  # Clamp between 1-16
+        print(f"[PYO] Configuring {num_voices} voices")
+        
+        # Create N voices
         self.voices = {}
-        for i in range(1, 5):
+        for i in range(1, num_voices + 1):
             voice_id = f"voice{i}"
             self.voices[voice_id] = Voice(voice_id, self.server)
             print(f"[PYO] Created {voice_id}")
         
-        # Create acid filter on voice2
-        # Use pre-filter signal (oscillator * ADSR) as per Senior Dev's guidance
-        self.acid1 = AcidFilter(
-            self.voices['voice2'].get_prefilter_signal(),  # Pre-filter tap for authentic 303
-            voice_id="acid1",
-            server=self.server
-        )
-        print("[PYO] Created acid1 filter on voice2")
+        # Create acid filter on voice2 (if it exists)
+        self.acid1 = None
+        if 'voice2' in self.voices:
+            # Use pre-filter signal (oscillator * ADSR) as per Senior Dev's guidance
+            self.acid1 = AcidFilter(
+                self.voices['voice2'].get_prefilter_signal(),  # Pre-filter tap for authentic 303
+                voice_id="acid1",
+                server=self.server
+            )
+            print("[PYO] Created acid1 filter on voice2")
+        else:
+            print(f"[PYO] Skipping acid filter (requires voice2, have {num_voices} voices)")
         
         # Create routing and effects with proper audio signal passing
         self.setup_routing()
         
-        print("[PYO] Created 4 voices + acid1 + dist1 + reverb + delay")
+        modules_str = f"{num_voices} voices"
+        if self.acid1:
+            modules_str += " + acid1"
+        modules_str += " + dist1 + reverb + delay"
+        print(f"[PYO] Created {modules_str}")
     
     def setup_routing(self):
         """Setup signal routing: voices -> acid (voice2) -> distortion -> effects -> output"""
+        # Get voice count for this session
+        num_voices = len(self.voices)
         
-        # Get acid output once and store it
-        acid_output = self.acid1.get_output()
+        # Get acid output once and store it (if acid exists)
+        acid_output = self.acid1.get_output() if self.acid1 else None
         
-        # Build dry signals list, replacing voice2 with acid1 output
-        # Use explicit ordering to ensure consistency
+        # Build dry signals list, replacing voice2 with acid1 output if it exists
+        # Dynamically handle N voices
         dry_signals = []
-        dry_signals.append(self.voices['voice1'].get_dry_signal())
-        dry_signals.append(acid_output)  # voice2 replaced by acid
-        dry_signals.append(self.voices['voice3'].get_dry_signal())
-        dry_signals.append(self.voices['voice4'].get_dry_signal())
+        for i in range(1, num_voices + 1):
+            voice_id = f"voice{i}"
+            if voice_id == 'voice2' and acid_output is not None:
+                # voice2 replaced by acid output
+                dry_signals.append(acid_output)
+            else:
+                dry_signals.append(self.voices[voice_id].get_dry_signal())
         
         self.dry_mix = Mix(dry_signals, voices=1)  # Mix to mono
         
@@ -770,19 +796,25 @@ class PyoEngine:
         # Build reverb sends from individual voices (pre-distortion)
         # This allows clean reverb tails even with heavy distortion
         reverb_sends = []
-        reverb_sends.append(self.voices['voice1'].get_reverb_send())
-        reverb_sends.append(acid_output * self.voices['voice2'].reverb_send)  # acid with voice2's send level
-        reverb_sends.append(self.voices['voice3'].get_reverb_send())
-        reverb_sends.append(self.voices['voice4'].get_reverb_send())
+        for i in range(1, num_voices + 1):
+            voice_id = f"voice{i}"
+            if voice_id == 'voice2' and acid_output is not None:
+                # acid with voice2's send level
+                reverb_sends.append(acid_output * self.voices['voice2'].reverb_send)
+            else:
+                reverb_sends.append(self.voices[voice_id].get_reverb_send())
         
         self.reverb_input = Mix(reverb_sends, voices=1)
         
         # Build delay sends from individual voices (pre-distortion)
         delay_sends = []
-        delay_sends.append(self.voices['voice1'].get_delay_send())
-        delay_sends.append(acid_output * self.voices['voice2'].delay_send)  # acid with voice2's send level
-        delay_sends.append(self.voices['voice3'].get_delay_send())
-        delay_sends.append(self.voices['voice4'].get_delay_send())
+        for i in range(1, num_voices + 1):
+            voice_id = f"voice{i}"
+            if voice_id == 'voice2' and acid_output is not None:
+                # acid with voice2's send level
+                delay_sends.append(acid_output * self.voices['voice2'].delay_send)
+            else:
+                delay_sends.append(self.voices[voice_id].get_delay_send())
         
         self.delay_input = Mix(delay_sends, voices=1)
         
@@ -794,11 +826,16 @@ class PyoEngine:
         self.setup_lfos()
         
         # Master output: distorted dry + reverb + delay
-        self.master = Mix([
+        self.master_mix = Mix([
             self.distorted_mix,  # Now includes distortion
             self.reverb.get_output(),
             self.delay.get_output()
         ], voices=1)
+        
+        # Add master limiter for protection (-3dB threshold, 20:1 ratio)
+        self.limiter = LimiterModule(self.master_mix, thresh=-3, ratio=20)
+        self.master = self.limiter.output
+        print("[PYO] Master limiter added for protection")
         
         # Send to output
         self.master.out()
@@ -912,7 +949,7 @@ class PyoEngine:
             if hasattr(self, 'viz_broadcast'):
                 # Get voice levels (clamped to 0.0-1.0)
                 voice_levels = []
-                for voice_id in ['voice1', 'voice2', 'voice3', 'voice4']:
+                for voice_id in sorted(self.voices.keys()):
                     if voice_id in self.voice_meters:
                         level = float(self.voice_meters[voice_id].get())
                         # Clamp to prevent display overflow
@@ -1239,7 +1276,7 @@ class PyoEngine:
                     print(f"[OSC] LFO2 depth: {value}")
         
         # Route acid filter parameters
-        elif module_id == 'acid1':
+        elif module_id == 'acid1' and self.acid1:
             if param == 'cutoff':
                 self.acid1.set_cutoff(value)
             elif param == 'res':
@@ -1378,7 +1415,7 @@ class PyoEngine:
         
         elif format_type == "file":
             # Write to file if environment variable is set
-            if os.environ.get('CHRONUS_EXPORT_SCHEMA'):
+            if True:  # Temporarily always allow export
                 filename = f"chronus_schema_{time.strftime('%Y%m%d_%H%M%S')}.json"
                 with open(filename, 'w') as f:
                     f.write(schema_json)
@@ -1631,7 +1668,8 @@ class PyoEngine:
         print("AVAILABLE MODULES")
         print("="*50)
         
-        print("\nVoices (voice1-4):") 
+        num_voices = len(self.voices)
+        print(f"\nVoices (voice1-voice{num_voices}):") 
         print("  /mod/voiceN/freq <20-5000>")
         print("  /mod/voiceN/amp <0-1>")
         print("  /mod/voiceN/filter/freq <50-8000>")
@@ -1720,8 +1758,9 @@ class PyoEngine:
         module_states["lfo1"] = self.lfo1.get_status()
         module_states["lfo2"] = self.lfo2.get_status()
         
-        # Acid filter
-        module_states["acid1"] = self.acid1.get_status()
+        # Acid filter (if it exists)
+        if self.acid1:
+            module_states["acid1"] = self.acid1.get_status()
         
         # Build complete state
         return {
@@ -1751,8 +1790,9 @@ class PyoEngine:
         module_data = data.get("modules", {})
         
         # Phase 1: Voice parameters (no dependencies)
-        for voice_id in ["voice1", "voice2", "voice3", "voice4"]:
-            if voice_id in module_data and voice_id in self.voices:
+        # Dynamically iterate over existing voices
+        for voice_id in self.voices.keys():
+            if voice_id in module_data:
                 voice_state = module_data[voice_id]
                 voice = self.voices[voice_id]
                 
@@ -1804,7 +1844,7 @@ class PyoEngine:
             self.delay.set_highcut(delay_state.get("highcut", 5000.0))
         
         # Phase 3: Acid filter (depends on voice2)
-        if "acid1" in module_data:
+        if "acid1" in module_data and self.acid1:
             acid_state = module_data["acid1"]
             self.acid1.set_cutoff(acid_state.get("cutoff", 1500.0))
             self.acid1.set_res(acid_state.get("res", 0.45))

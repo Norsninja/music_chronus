@@ -92,12 +92,19 @@ class Voice:
             mul=self.adsr
         )
         
-        # Waveform selector control (0=sine, 1=saw, 2=square)
+        # Create noise oscillators with amplitude calibration
+        # White noise is typically 3dB louder, compensate with 0.7 multiplier
+        self.osc_noise = Noise(mul=self.adsr * 0.7)
+        self.osc_pink = PinkNoise(mul=self.adsr * 0.85)  # Pink ~1.5dB louder
+        self.osc_brown = BrownNoise(mul=self.adsr * 1.0)  # Brown matches tonal levels
+        
+        # Waveform selector control (0=sine, 1=saw, 2=square, 3=white, 4=pink, 5=brown)
         self.waveform_select = Sig(0)
         
         # Selector with equal-power crossfade for click-free switching
         self.osc = Selector(
-            [self.osc_sine, self.osc_saw, self.osc_square],
+            [self.osc_sine, self.osc_saw, self.osc_square,
+             self.osc_noise, self.osc_pink, self.osc_brown],
             voice=self.waveform_select
         )
         self.osc.setMode(1)  # Mode 1 = equal-power crossfade
@@ -250,10 +257,10 @@ class Voice:
         """Set oscillator waveform type
         
         Args:
-            waveform: 0=sine, 1=saw, 2=square
+            waveform: 0=sine, 1=saw, 2=square, 3=white noise, 4=pink noise, 5=brown noise
         """
         waveform = int(waveform)
-        if waveform < 0 or waveform > 2:
+        if waveform < 0 or waveform > 5:
             print(f"[VOICE] Warning: Invalid waveform {waveform}, using 0 (sine)")
             waveform = 0
         self.waveform_select.value = waveform
@@ -286,7 +293,7 @@ class Voice:
             "params": {
                 "freq": {"type": "float", "min": 20, "max": 5000, "default": 440.0, "smoothing_ms": 20, "unit": "Hz"},
                 "amp": {"type": "float", "min": 0, "max": 1, "default": 0.3, "smoothing_ms": 20},
-                "osc/type": {"type": "int", "min": 0, "max": 2, "default": 0, "notes": "0=sine, 1=saw, 2=square"},
+                "osc/type": {"type": "int", "min": 0, "max": 5, "default": 0, "notes": "0=sine, 1=saw, 2=square, 3=white noise, 4=pink noise, 5=brown noise"},
                 "filter/freq": {"type": "float", "min": 50, "max": 8000, "default": 1000.0, "smoothing_ms": 20, "unit": "Hz"},
                 "filter/q": {"type": "float", "min": 0.5, "max": 10, "default": 2.0, "smoothing_ms": 20},
                 "adsr/attack": {"type": "float", "min": 0.001, "max": 2, "default": 0.01, "unit": "seconds"},
