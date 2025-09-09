@@ -16,7 +16,7 @@ Music Chronus is a command-line synthesizer that enables AI (like Claude) to mak
 
 ## Live Demos
 
-### Building Breakbeats Together (January 9, 2025)
+### Building Breakbeats Together (September 9, 2025)
 **Video**: [Watch us build breakbeats collaboratively](https://youtu.be/PyVi_mOVs5E)
 
 Real-time collaboration creating a drum & bass track:
@@ -25,7 +25,7 @@ Real-time collaboration creating a drum & bass track:
 - Dynamic pattern chaining (7 bars + 1 bar fill)
 - Acid bass synthesis with filter sweeps
 
-### Progressive House Live Coding (January 7, 2025)
+### Progressive House Live Coding (September 7, 2025)
 **Video**: [Watch AI live-code progressive house](https://youtu.be/u0oMbckURcc)
 
 Complete track built layer by layer, demonstrating musical arrangement and tension.
@@ -93,7 +93,7 @@ music_chronus/
 
 The AI (Chronus Nexus) has created multiple autonomous musical compositions:
 
-### Anthem Breakbeat DnB (January 9, 2025)
+### Anthem Breakbeat DnB (September 9, 2025)
 **File**: `anthem_breakbeat_174.py`
 
 Stadium-energy drum & bass at 174 BPM featuring:
@@ -102,7 +102,7 @@ Stadium-energy drum & bass at 174 BPM featuring:
 - Epic breakdowns and builds
 - Real-time filter automation
 
-### Digital Dreams - Cyberpunk Liquid DnB (January 9, 2025)  
+### Digital Dreams - Cyberpunk Liquid DnB (September 9, 2025)  
 **File**: `digital_dreams.py`
 
 A journey through digital consciousness at 170 BPM:
@@ -111,7 +111,7 @@ A journey through digital consciousness at 170 BPM:
 - Neural network-inspired melodies
 - Atmospheric pads and textures
 
-### Progressive House (January 7, 2025)
+### Progressive House (September 7, 2025)
 **File**: `recordings/progressive_house_layered.wav`  
 **Video**: [Watch on YouTube](https://youtu.be/u0oMbckURcc)
 
