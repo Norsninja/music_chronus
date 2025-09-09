@@ -25,6 +25,27 @@ After successful pattern save/load implementation:
 
 ## Current Sprint: Audio Module Implementation 🎛️
 
+### Update (2025-01-09): Noise Generator Integration 🔊
+
+After successful music creation workflow and agent development, expanding voice architecture with noise generators for professional drum synthesis.
+
+#### Phase 1: Foundation (In Progress)
+- [ ] Add noise oscillators to Voice class (white, pink, brown)
+- [ ] Extend Selector from 3 to 6 waveform sources
+- [ ] Update validation logic for indices 0-5
+- [ ] Manual test of noise output
+
+#### Phase 2: Core Features
+- [ ] Implement amplitude calibration (0.7x white, 0.85x pink, 1.0x brown)
+- [ ] Update schema registry documentation
+- [ ] Verify OSC control for all waveforms
+
+#### Phase 3: Polish & Testing
+- [ ] Create comprehensive test suite
+- [ ] Build drum synthesis examples (kick, snare, hi-hat)
+- [ ] Performance benchmarks (<5% CPU increase)
+- [ ] Documentation updates
+
 ### Week 1 Tasks (2025-01-07 - 2025-01-11) ✅ COMPLETED AHEAD OF SCHEDULE
 
 #### Day 1: Oscillator Types ✅ COMPLETE

@@ -8,7 +8,11 @@
         "voice1",
         "voice2",
         "voice3",
-        "voice4"
+        "voice4",
+        "voice5",
+        "voice6",
+        "voice7",
+        "voice8"
       ],
       "params": {
         "freq": {

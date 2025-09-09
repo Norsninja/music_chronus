@@ -1,0 +1,178 @@
+{
+  "chronus_version": "1.0.0",
+  "schema_version": "1.0",
+  "timestamp": 1757380687.4854708,
+  "sequencer": {
+    "bpm": 140.0,
+    "swing": 0.0,
+    "running": true,
+    "global_step": 19,
+    "tracks": {
+      "melody": {
+        "name": "melody",
+        "voice_id": "voice5",
+        "pattern": "..x...x...x...x.",
+        "notes": [],
+        "base_freq": 880.0,
+        "base_amp": 0.3,
+        "filter_freq": 3000.0,
+        "accent_boost": 1500.0,
+        "reverb_send": 0.0,
+        "delay_send": 0.0,
+        "gate_frac": 0.5,
+        "note_index": 0
+      },
+      "counter": {
+        "name": "counter",
+        "voice_id": "voice6",
+        "pattern": "x...x...x...x...",
+        "notes": [],
+        "base_freq": 660.0,
+        "base_amp": 0.3,
+        "filter_freq": 2500.0,
+        "accent_boost": 1500.0,
+        "reverb_send": 0.0,
+        "delay_send": 0.0,
+        "gate_frac": 0.5,
+        "note_index": 0
+      },
+      "perc1": {
+        "name": "perc1",
+        "voice_id": "voice7",
+        "pattern": "x.x.x.x.x.x.x.x.",
+        "notes": [],
+        "base_freq": 440.0,
+        "base_amp": 0.3,
+        "filter_freq": 1500.0,
+        "accent_boost": 1500.0,
+        "reverb_send": 0.0,
+        "delay_send": 0.0,
+        "gate_frac": 0.5,
+        "note_index": 0
+      },
+      "bass2": {
+        "name": "bass2",
+        "voice_id": "voice8",
+        "pattern": "X.......X.......",
+        "notes": [],
+        "base_freq": 55.0,
+        "base_amp": 0.3,
+        "filter_freq": 200.0,
+        "accent_boost": 1500.0,
+        "reverb_send": 0.0,
+        "delay_send": 0.0,
+        "gate_frac": 0.5,
+        "note_index": 0
+      }
+    }
+  },
+  "modules": {
+    "voice1": {
+      "voice_id": "voice1",
+      "freq": 110.0,
+      "amp": 0.15000000596046448,
+      "filter_freq": 1200.0,
+      "filter_q": 2.0,
+      "reverb_send": 0.0,
+      "delay_send": 0.0,
+      "adsr": {
+        "attack": 0.009999999776482582,
+        "decay": 0.10000000149011612,
+        "sustain": 0.30000001192092896,
+        "release": 0.20000000298023224
+      },
+      "waveform": 0,
+      "slide_time": 0.0
+    },
+    "voice2": {
+      "voice_id": "voice2",
+      "freq": 138.60000610351562,
+      "amp": 0.15000000596046448,
+      "filter_freq": 1400.0,
+      "filter_q": 2.0,
+      "reverb_send": 0.0,
+      "delay_send": 0.0,
+      "adsr": {
+        "attack": 0.009999999776482582,
+        "decay": 0.10000000149011612,
+        "sustain": 0.30000001192092896,
+        "release": 0.20000000298023224
+      },
+      "waveform": 0,
+      "slide_time": 0.0
+    },
+    "voice3": {
+      "voice_id": "voice3",
+      "freq": 165.0,
+      "amp": 0.15000000596046448,
+      "filter_freq": 1600.0,
+      "filter_q": 2.0,
+      "reverb_send": 0.0,
+      "delay_send": 0.0,
+      "adsr": {
+        "attack": 0.009999999776482582,
+        "decay": 0.10000000149011612,
+        "sustain": 0.30000001192092896,
+        "release": 0.20000000298023224
+      },
+      "waveform": 0,
+      "slide_time": 0.0
+    },
+    "voice4": {
+      "voice_id": "voice4",
+      "freq": 220.0,
+      "amp": 0.15000000596046448,
+      "filter_freq": 1800.0,
+      "filter_q": 2.0,
+      "reverb_send": 0.0,
+      "delay_send": 0.0,
+      "adsr": {
+        "attack": 0.009999999776482582,
+        "decay": 0.10000000149011612,
+        "sustain": 0.30000001192092896,
+        "release": 0.20000000298023224
+      },
+      "waveform": 0,
+      "slide_time": 0.0
+    },
+    "dist1": {
+      "module_id": "dist1",
+      "drive": 0.0,
+      "mix": 0.0,
+      "tone": 0.5
+    },
+    "reverb1": {
+      "mix": 0.3,
+      "room": 0.5,
+      "damp": 0.5
+    },
+    "delay1": {
+      "time": 0.25,
+      "feedback": 0.4,
+      "mix": 0.3,
+      "lowcut": 100.0,
+      "highcut": 5000.0
+    },
+    "lfo1": {
+      "module_id": "lfo1",
+      "rate": 0.25,
+      "depth": 0.7
+    },
+    "lfo2": {
+      "module_id": "lfo2",
+      "rate": 4.0,
+      "depth": 0.3
+    },
+    "acid1": {
+      "voice_id": "acid1",
+      "cutoff": 1500.0,
+      "res": 0.45,
+      "env_amount": 2500.0,
+      "decay": 0.25,
+      "drive": 0.2,
+      "mix": 1.0,
+      "vol_comp": 0.5,
+      "accent_disabled": true
+    }
+  }
+}

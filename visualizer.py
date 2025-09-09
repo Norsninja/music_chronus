@@ -4,6 +4,7 @@ Terminal-based Music Visualizer for Music Chronus
 Real-time audio visualization with 8-bit aesthetic
 """
 
+import os
 import time
 import threading
 import signal
@@ -41,10 +42,15 @@ class MusicChronusVisualizer:
         self.osc_monitor_port = 5006  # Receive visualization broadcast data
         self.osc_viz_port = 5006      # Same port for viz data
         
+        # Voice configuration (dynamic)
+        self.num_voices = self._detect_voice_count()
+        self.voice_count_detected = False  # Track if auto-detected from OSC
+        
         # Data buffers (thread-safe with locks)
         self.data_lock = threading.Lock()
+        self.reconfigure_lock = threading.Lock()  # For voice count changes
         self.osc_messages = deque(maxlen=20)  # Last 20 OSC messages
-        self.audio_levels = [0.0] * 4  # 4 voices
+        self.audio_levels = [0.0] * self.num_voices  # Dynamic voice count
         self.master_level = 0.0
         self.spectrum_data = [0.0] * 8  # 8 frequency bands
         
@@ -66,6 +72,50 @@ class MusicChronusVisualizer:
         
         # Create pet after layout is ready
         self.pet = ChronusPet(self)
+        
+        print(f"[VISUALIZER] Initialized with {self.num_voices} voices")
+        
+    def _detect_voice_count(self) -> int:
+        """Detect voice count from environment or use default"""
+        # Try environment variable first (matches engine configuration)
+        try:
+            env_voices = os.environ.get('CHRONUS_NUM_VOICES')
+            if env_voices:
+                num_voices = int(env_voices)
+                # Clamp to valid range (1-16)
+                num_voices = max(1, min(16, num_voices))
+                print(f"[VISUALIZER] Using CHRONUS_NUM_VOICES={num_voices}")
+                return num_voices
+        except (ValueError, TypeError):
+            pass
+        
+        # Default to 4 voices for backward compatibility
+        print("[VISUALIZER] No CHRONUS_NUM_VOICES found, defaulting to 4 voices")
+        return 4
+    
+    def _reconfigure_voice_count(self, new_count: int):
+        """Safely reconfigure voice count during runtime"""
+        with self.reconfigure_lock:
+            if new_count == self.num_voices:
+                return  # No change needed
+            
+            print(f"[VISUALIZER] Reconfiguring from {self.num_voices} to {new_count} voices")
+            
+            # Update voice count
+            old_count = self.num_voices
+            self.num_voices = new_count
+            
+            # Resize audio levels buffer (preserve existing data where possible)
+            with self.data_lock:
+                old_levels = self.audio_levels[:]
+                self.audio_levels = [0.0] * new_count
+                
+                # Copy over existing levels
+                for i in range(min(old_count, new_count)):
+                    self.audio_levels[i] = old_levels[i]
+            
+            self.voice_count_detected = True
+            print(f"[VISUALIZER] Reconfigured to {new_count} voices")
         
     def setup_layout(self):
         """Configure the Rich layout with panels"""
@@ -148,7 +198,7 @@ class MusicChronusVisualizer:
                 voice = addr.split("/")[-1]
                 if voice.startswith("voice") and args:
                     idx = int(voice[-1]) - 1
-                    if 0 <= idx < 4:
+                    if 0 <= idx < self.num_voices:
                         self.audio_levels[idx] = float(args[0]) * 0.5
                         
             self.engine_connected = True
@@ -172,10 +222,25 @@ class MusicChronusVisualizer:
         # Log to message display FIRST so it appears in OSC panel
         self.handle_osc_message(addr, *args)
         
+        # Auto-detect voice count from first message if not already detected
+        if not self.voice_count_detected and args:
+            received_count = len(args)
+            if received_count != self.num_voices:
+                print(f"[VISUALIZER] Auto-detecting {received_count} voices from OSC data")
+                self._reconfigure_voice_count(received_count)
+        
         # Then process the data
         with self.data_lock:
-            if args and len(args) >= 4:
-                self.audio_levels = [float(x) for x in args[:4]]
+            if args:
+                # Process all received voice levels (dynamic count)
+                received_count = len(args)
+                for i in range(min(received_count, self.num_voices)):
+                    self.audio_levels[i] = float(args[i])
+                
+                # Zero out any voices not in the received data
+                for i in range(received_count, self.num_voices):
+                    self.audio_levels[i] = 0.0
+                    
                 # Mark as receiving live data  
                 self.engine_connected = True
                 self.last_status_update = time.time()
@@ -208,8 +273,9 @@ class MusicChronusVisualizer:
             table.add_column("Level", min_width=20)
             table.add_column("Value", style="green")
             
-            for i in range(4):
-                level = self.audio_levels[i]
+            # Dynamic voice count
+            for i in range(self.num_voices):
+                level = self.audio_levels[i] if i < len(self.audio_levels) else 0.0
                 # Handle NaN and invalid values
                 if level != level or level is None:  # NaN check
                     level = 0.0
@@ -440,7 +506,10 @@ class ChronusPet:
                 valid_levels.append(0.0)
         
         active_voices = sum(1 for level in valid_levels if level > 0.1)
-        score += active_voices * 6  # Up to 24 points for 4 voices
+        # Scale points based on actual voice count (max 25 points)
+        if self.visualizer.num_voices > 0:
+            points_per_voice = 25.0 / self.visualizer.num_voices
+            score += min(active_voices * points_per_voice, 25)
         
         # Check spectrum balance (max 25 points)
         if self.visualizer.spectrum_data:

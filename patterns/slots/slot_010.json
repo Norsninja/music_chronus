@@ -1,12 +1,12 @@
 {
   "chronus_version": "1.0.0",
   "schema_version": "1.0",
-  "timestamp": 1757433454.432593,
+  "timestamp": 1757433960.640994,
   "sequencer": {
     "bpm": 174.0,
     "swing": 0.05000000074505806,
     "running": true,
-    "global_step": 6697,
+    "global_step": 6794,
     "tracks": {
       "kick": {
         "name": "kick",
