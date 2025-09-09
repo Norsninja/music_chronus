@@ -433,41 +433,66 @@ class ChronusPet:
     def __init__(self, visualizer):
         self.visualizer = visualizer
         
-        # Pet states
+        # Pet states - Multi-line kawaii character
         self.states = {
             "sleeping": {
-                "frames": ["( -_- )", "( =_= )", "( -_- )", "( =_= )"],
+                "frames": [
+                    ["    zzZ   ", "  ∩___∩  ", "  ( -ω- ) ", "  ( ∪ ∪ ) "],
+                    ["   zzZ    ", "  ∩___∩  ", "  ( =ω= ) ", "  ( ∪ ∪ ) "],
+                    ["    zzZ   ", "  ∩___∩  ", "  ( -ω- ) ", "  ( ∪ ∪ ) "],
+                    ["   zzZ    ", "  ∩___∩  ", "  ( =ω= ) ", "  ( ∪ ∪ ) "]
+                ],
                 "message": "zzz... no music detected",
                 "color": "dim white"
             },
             "waking": {
-                "frames": ["( o.o )", "( o_o )", "( o.o )", "( o_o )"],
+                "frames": [
+                    ["    ...   ", "  ∩___∩  ", "  ( ･ω･ )?", "  ( ∪ ∪ ) "],
+                    ["   ...    ", "  ∩___∩  ", "  ( ･_･ )?", "  ( ∪ ∪ ) "],
+                    ["    ...   ", "  ∩___∩  ", "  ( ･ω･ )?", "  ( ∪ ∪ ) "],
+                    ["   ...    ", "  ∩___∩  ", "  ( ･_･ )?", "  ( ∪ ∪ ) "]
+                ],
                 "message": "oh? something's happening...",
                 "color": "yellow"
             },
             "vibing": {
-                "frames": ["( ^_^ )", "( ^‿^ )", "( ^_^ )", "( ^‿^ )"],
+                "frames": [
+                    ["   ♪      ", "  ∩___∩  ", "  ( ◕ω◕ ) ", " (( ∪ ∪ ))"],
+                    ["      ♫   ", "  ∩___∩  ", "  ( ◕ω◕ ) ", "(( ∪ ∪ )) "],
+                    ["   ♪      ", "  ∩___∩  ", "  ( ◕ω◕ ) ", " (( ∪ ∪ ))"],
+                    ["      ♫   ", "  ∩___∩  ", "  ( ◕ω◕ ) ", "(( ∪ ∪ )) "]
+                ],
                 "message": "nice sounds! keep going!",
                 "color": "green"
             },
             "dancing": {
-                "frames": ["\\( ^o^ )/", "/( ^o^ )\\", "\\( ^o^ )/", "/( ^o^ )\\"],
+                "frames": [
+                    ["  ♪ ♫ ♪   ", "  ∩___∩  ", "  ( >◡< ) ", " o( ∪ ∪ )o"],
+                    ["   ♫ ♪ ♫  ", "  ∩___∩  ", "  ( >◡< ) ", "o( ∪ ∪ )o "],
+                    ["  ♪ ♫ ♪   ", "  ∩___∩  ", "  ( >◡< ) ", " o( ∪ ∪ )o"],
+                    ["   ♫ ♪ ♫  ", "  ∩___∩  ", "  ( >◡< ) ", "o( ∪ ∪ )o "]
+                ],
                 "message": "this is getting good!",
                 "color": "cyan"
             },
             "raving": {
-                "frames": ["\\( >◡< )/", "~( >◡< )~", "/( >◡< )\\", "~( >◡< )~"],
+                "frames": [
+                    ["  ★ ☆ ★   ", "  ∩___∩  ", "  ( ☆ω☆ ) ", " ⊂( ∪ ∪ )⊃"],
+                    ["   ☆ ★ ☆  ", "  ∩___∩  ", "  ( ★ω★ ) ", "⊂( ∪ ∪ )⊃ "],
+                    ["  ★ ☆ ★   ", "  ∩___∩  ", "  ( ☆ω☆ ) ", " ⊂( ∪ ∪ )⊃"],
+                    ["   ☆ ★ ☆  ", "  ∩___∩  ", "  ( ★ω★ ) ", "⊂( ∪ ∪ )⊃ "]
+                ],
                 "message": "AMAZING! Peak musical energy!",
                 "color": "magenta"
             },
             "transcendent": {
                 "frames": [
-                    "✧･ﾟ: *✧･ﾟ:* \\( ◕‿◕ )/ *:･ﾟ✧*:･ﾟ✧",
-                    "･ﾟ✧*:･ﾟ✧ \\( ◕‿◕ )/ ✧･ﾟ: *✧･ﾟ:*",
-                    "*✧･ﾟ:*✧･ﾟ \\( ◕‿◕ )/ ･ﾟ✧*:･ﾟ✧*",
-                    "✧･ﾟ: *✧･ﾟ:* \\( ◕‿◕ )/ *:･ﾟ✧*:･ﾟ✧"
+                    [" ✨ ✧ ✨ ✧ ", "  ∩___∩  ", "  ( ♥ω♥ ) ", " ⊂( ∪ ∪ )⊃"],
+                    ["  ✧ ✨ ✧ ✨", "  ∩___∩  ", "  ( ♥ω♥ ) ", "⊂( ∪ ∪ )⊃ "],
+                    [" ✨ ✧ ✨ ✧ ", "  ∩___∩  ", "  ( ♥ω♥ ) ", " ⊂( ∪ ∪ )⊃"],
+                    ["  ✧ ✨ ✧ ✨", "  ∩___∩  ", "  ( ♥ω♥ ) ", "⊂( ∪ ∪ )⊃ "]
                 ],
-                "message": "TRANSCENDENT! Musical nirvana achieved!",
+                "message": "EUPHORIA! Musical nirvana achieved!",
                 "color": "bold magenta"
             }
         }
@@ -588,7 +613,8 @@ class ChronusPet:
             self.frame_counter = 0
             self.frame_index = (self.frame_index + 1) % len(state_data["frames"])
         
-        current_frame = state_data["frames"][self.frame_index]
+        # Get multi-line frame (now it's an array of strings)
+        current_frame_lines = state_data["frames"][self.frame_index]
         
         # Create score bar
         bar_width = 40
@@ -603,19 +629,28 @@ class ChronusPet:
         else:
             bar_color = "green"
         
-        # Build display
-        lines = []
-        lines.append("")  # Spacing
-        lines.append(Text(current_frame, justify="center", style=state_data["color"]))
-        lines.append("")
-        lines.append(Text(state_data["message"], justify="center", style=state_data["color"]))
-        lines.append("")
-        lines.append(Text(f"Musical Energy: {self.musical_score}/100", justify="center"))
-        lines.append(Text(f"[{score_bar}]", justify="center", style=bar_color))
-        lines.append("")
+        # Build display with multi-line pet
+        display_lines = []
         
-        # Combine lines
-        content = Columns(lines, align="center", expand=True)
+        # Add each line of the pet animation
+        for line in current_frame_lines:
+            display_lines.append(line)
+        
+        # Add spacing and message
+        display_lines.append("")  # Empty line for spacing
+        display_lines.append(state_data["message"])
+        display_lines.append(f"Musical Energy: {self.musical_score}/100")
+        display_lines.append(f"[{score_bar}]")
+        
+        # Create a single text string with all lines
+        full_text = "\n".join(display_lines)
+        
+        # Create Text object with center justification and proper styling
+        from rich.align import Align
+        content = Align.center(
+            Text(full_text, style=state_data["color"], justify="center"),
+            vertical="middle"
+        )
         
         return Panel(
             content,
